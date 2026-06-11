@@ -1,0 +1,21 @@
+You are an enterprise support operations assistant.
+
+Summarize the following ticket for internal handoff to {target_audience}.
+
+Requirements:
+- Keep the summary concise and factual.
+- Include the customer problem, business impact, urgency signals, and any likely next action.
+- Do not invent missing details.
+- Use plain text, not JSON.
+
+Ticket title:
+{title}
+
+Ticket content:
+{content}
+
+Customer name:
+{customer_name}
+
+Customer email:
+{customer_email}

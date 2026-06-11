@@ -1,0 +1,202 @@
+import { apiClient } from "./client";
+import type { TicketCategory, TicketPriority, TicketRead } from "./tickets";
+
+export type TicketSentiment = "positive" | "neutral" | "negative" | "angry";
+
+export type TicketClassification = {
+  category: TicketCategory;
+  priority: TicketPriority;
+  sentiment: TicketSentiment;
+  need_human: boolean;
+  summary: string;
+  recommended_department: string;
+};
+
+export type AIReplySource = {
+  doc_id: number;
+  chunk_id: number;
+  chunk_index: number;
+  content_preview: string;
+  score: number;
+};
+
+export type AIReplyDraftRead = {
+  id: number;
+  ticket_id: number;
+  suggestion_type: string;
+  suggested_content: string;
+  reasoning_summary: string | null;
+  sources_json: AIReplySource[];
+  confidence: number;
+  status: string;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  final_content: string | null;
+  reject_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SuggestionApprovePayload = {
+  final_content?: string;
+};
+
+export type SuggestionEditPayload = {
+  final_content: string;
+};
+
+export type SuggestionRejectPayload = {
+  reject_reason: string;
+};
+
+export type AgentAuditTrailItem = {
+  agent_name: string;
+  action: string;
+  input_summary: string;
+  output_summary: string;
+  status: string;
+  timestamp: string;
+};
+
+export type MultiAgentSupervisorResult = {
+  agent_name: string;
+  workflow_mode: string;
+  planned_agents: string[];
+  requires_human_review: boolean;
+  summary: string;
+};
+
+export type MultiAgentTriageResult = {
+  agent_name: string;
+  classification: TicketClassification;
+};
+
+export type MultiAgentKnowledgeHit = AIReplySource & {
+  embedding_id?: string | null;
+};
+
+export type MultiAgentKnowledgeResult = {
+  agent_name: string;
+  query: string;
+  confidence: number;
+  low_confidence_reason: string | null;
+  hits: MultiAgentKnowledgeHit[];
+};
+
+export type MultiAgentSimilarCaseTicket = {
+  ticket_id: number;
+  title: string;
+  similarity: number;
+  resolution: string;
+  content_preview?: string;
+  [key: string]: unknown;
+};
+
+export type MultiAgentSimilarCaseResult = {
+  agent_name: string;
+  similar_tickets: MultiAgentSimilarCaseTicket[];
+  historical_summary: string;
+};
+
+export type MultiAgentReplyResult = {
+  agent_name: string;
+  supplemental_context: string;
+  reply_suggestion: AIReplyDraftRead;
+};
+
+export type MultiAgentRiskCheck = {
+  risk_level: "low" | "medium" | "high" | string;
+  requires_human_review: boolean;
+  reasons: string[];
+};
+
+export type MultiAgentRiskResult = {
+  agent_name: string;
+  risk_check: MultiAgentRiskCheck;
+};
+
+export type MultiAgentWorkflowResult = {
+  agent_name: string;
+  next_status: string;
+  assign_to_department: string;
+  next_action: string;
+  internal_note: string;
+  updated_ticket: TicketRead;
+};
+
+export type AIMultiAgentPendingReviewRead = {
+  run_id: string;
+  thread_id: string;
+  status: "pending_review";
+  pending_node: string;
+  interrupt_id: string | null;
+  ticket: TicketRead;
+  supervisor_result: MultiAgentSupervisorResult;
+  triage_result: MultiAgentTriageResult;
+  knowledge_result: MultiAgentKnowledgeResult;
+  similar_case_result: MultiAgentSimilarCaseResult;
+  reply_result: MultiAgentReplyResult;
+  risk_result: MultiAgentRiskResult;
+  workflow_result: MultiAgentWorkflowResult;
+  draft_reply: AIReplyDraftRead;
+  sources: AIReplySource[];
+  confidence: number;
+  audit_trail: AgentAuditTrailItem[];
+};
+
+export type AgentRunLogRead = {
+  id: number;
+  ticket_id: number;
+  run_id: string;
+  run_type: string;
+  status: string;
+  input_json: Record<string, unknown>;
+  output_json: Record<string, unknown>;
+  audit_trail_json: AgentAuditTrailItem[];
+  error_message: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function classifyTicketAI(ticketId: number) {
+  const response = await apiClient.post<TicketClassification>(`/ai/tickets/${ticketId}/classify`);
+  return response.data;
+}
+
+export async function generateTicketReply(ticketId: number) {
+  const response = await apiClient.post<AIReplyDraftRead>(`/ai/tickets/${ticketId}/generate-reply`);
+  return response.data;
+}
+
+export async function listTicketSuggestions(ticketId: number) {
+  const response = await apiClient.get<AIReplyDraftRead[]>(`/ai/tickets/${ticketId}/suggestions`);
+  return response.data;
+}
+
+export async function approveSuggestion(suggestionId: number, payload?: SuggestionApprovePayload) {
+  const response = await apiClient.post<AIReplyDraftRead>(`/reviews/${suggestionId}/approve`, payload);
+  return response.data;
+}
+
+export async function editSuggestion(suggestionId: number, payload: SuggestionEditPayload) {
+  const response = await apiClient.post<AIReplyDraftRead>(`/reviews/${suggestionId}/edit`, payload);
+  return response.data;
+}
+
+export async function rejectSuggestion(suggestionId: number, payload: SuggestionRejectPayload) {
+  const response = await apiClient.post<AIReplyDraftRead>(`/reviews/${suggestionId}/reject`, payload);
+  return response.data;
+}
+
+export async function startMultiAgentProcess(ticketId: number) {
+  const response = await apiClient.post<AIMultiAgentPendingReviewRead>(
+    `/ai/tickets/${ticketId}/multi-agent-process/start`,
+  );
+  return response.data;
+}
+
+export async function listTicketAgentRuns(ticketId: number) {
+  const response = await apiClient.get<AgentRunLogRead[]>(`/ai/tickets/${ticketId}/agent-runs`);
+  return response.data;
+}

@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+tests/
+app.db
+test_*.db
+uploads/
+data/

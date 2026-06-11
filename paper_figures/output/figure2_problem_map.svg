@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="600.3pt" height="374.76pt" viewBox="0 0 600.3 374.76" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-06-04T10:48:06.356845</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.9, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 374.76 
+L 600.3 374.76 
+L 600.3 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 234.5292 116.02872 
+L 365.7708 116.02872 
+Q 377.4888 116.02872 377.4888 108.82152 
+L 377.4888 78.55128 
+Q 377.4888 71.34408 365.7708 71.34408 
+L 234.5292 71.34408 
+Q 222.8112 71.34408 222.8112 78.55128 
+L 222.8112 108.82152 
+Q 222.8112 116.02872 234.5292 116.02872 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #dcebfa; stroke: #3a506b; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 64.6182 224.13672 
+L 207.5778 224.13672 
+Q 219.2958 224.13672 219.2958 216.92952 
+L 219.2958 157.83048 
+Q 219.2958 150.62328 207.5778 150.62328 
+L 64.6182 150.62328 
+Q 52.9002 150.62328 52.9002 157.83048 
+L 52.9002 216.92952 
+Q 52.9002 224.13672 64.6182 224.13672 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #f8fafc; stroke: #3a506b; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 228.6702 224.13672 
+L 371.6298 224.13672 
+Q 383.3478 224.13672 383.3478 216.92952 
+L 383.3478 157.83048 
+Q 383.3478 150.62328 371.6298 150.62328 
+L 228.6702 150.62328 
+Q 216.9522 150.62328 216.9522 157.83048 
+L 216.9522 216.92952 
+Q 216.9522 224.13672 228.6702 224.13672 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #f8fafc; stroke: #3a506b; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 392.7222 224.13672 
+L 535.6818 224.13672 
+Q 547.3998 224.13672 547.3998 216.92952 
+L 547.3998 157.83048 
+Q 547.3998 150.62328 535.6818 150.62328 
+L 392.7222 150.62328 
+Q 381.0042 150.62328 381.0042 157.83048 
+L 381.0042 216.92952 
+Q 381.0042 224.13672 392.7222 224.13672 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #f8fafc; stroke: #3a506b; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 211.0932 314.22672 
+L 389.2068 314.22672 
+Q 400.9248 314.22672 400.9248 307.01952 
+L 400.9248 255.12768 
+Q 400.9248 247.92048 389.2068 247.92048 
+L 211.0932 247.92048 
+Q 199.3752 247.92048 199.3752 255.12768 
+L 199.3752 307.01952 
+Q 199.3752 314.22672 211.0932 314.22672 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #f8fafc; stroke: #3a506b; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 298.273647 112.386343 
+Q 235.702849 135.127128 175.023467 157.180495 
+" clip-path="url(#p44f9b45037)" style="fill: none; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 182.131581 158.001906 
+L 175.023467 157.180495 
+L 179.945464 151.98685 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #64748b; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 300.15 113.703052 
+Q 300.15 135.126638 300.15 154.537762 
+" clip-path="url(#p44f9b45037)" style="fill: none; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 303.35 148.137762 
+L 300.15 154.537762 
+L 296.95 148.137762 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #64748b; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 302.026353 112.386343 
+Q 364.597151 135.127128 425.276533 157.180495 
+" clip-path="url(#p44f9b45037)" style="fill: none; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 420.354536 151.98685 
+L 425.276533 157.180495 
+L 418.168419 158.001906 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #64748b; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 300.15 113.707341 
+Q 300.15 181.976189 300.15 248.232576 
+" clip-path="url(#p44f9b45037)" style="fill: none; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 303.35 241.832576 
+L 300.15 248.232576 
+L 296.95 241.832576 
+z
+" clip-path="url(#p44f9b45037)" style="fill: #64748b; stroke: #64748b; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 17px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #0f172a" x="300.15" y="26.296041" transform="rotate(-0 300.15 26.296041)">图2 小学定向运动开展现状与问题归因图</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #475569" x="300.15" y="38.673214" transform="rotate(-0 300.15 38.673214)">Current situation and four major problem clusters</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 14px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2933" x="300.15" y="97.541869" transform="rotate(-0 300.15 97.541869)">小学定向运动开展现状</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(103.098 168.501422)">课程开展不足</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(114.098 183.106672)">目标模糊</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(103.098 197.711922)">重理论轻实践</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(108.598 212.317172)">递进性不足</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(267.15 168.501422)">师资专业薄弱</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(272.65 183.106672)">培训短期化</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(261.65 197.711922)">技能掌握不系统</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(267.15 212.317172)">方法创新不足</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(431.202 168.501422)">场地器材受限</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(431.202 183.106672)">校园地形单一</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(431.202 197.711922)">校外组织困难</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(431.202 212.317172)">器材老化不足</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(267.15 262.195022)">评价体系单一</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(267.15 276.800272)">偏重结果评价</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(267.15 291.405522)">忽视过程反馈</text>
+    <text style="font-size: 11px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; fill: #1f2933" transform="translate(239.65 306.010772)">忽视健康行为与体育品德</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #475569" x="300.15" y="337.606116" transform="rotate(-0 300.15 337.606116)">图中四类问题与论文“现状分析”和“问题分析”章节一一对应，可用于从描述现象过渡到机制归因。</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p44f9b45037">
+   <rect x="7.2" y="7.2" width="585.9" height="360.36"/>
+  </clipPath>
+ </defs>
+</svg>
