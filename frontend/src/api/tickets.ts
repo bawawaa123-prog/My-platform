@@ -80,6 +80,12 @@ export type TicketMessageRead = {
   updated_at: string;
 };
 
+export type TicketMessageCreatePayload = {
+  sender_type: "customer" | "agent" | "ai" | "system";
+  content: string;
+  sender_name?: string;
+};
+
 export async function listTickets() {
   const response = await apiClient.get<TicketRead[]>("/tickets");
   return response.data;
@@ -102,5 +108,10 @@ export async function updateTicket(ticketId: number, payload: TicketUpdatePayloa
 
 export async function listTicketMessages(ticketId: number) {
   const response = await apiClient.get<TicketMessageRead[]>(`/tickets/${ticketId}/messages`);
+  return response.data;
+}
+
+export async function addTicketMessage(ticketId: number, payload: TicketMessageCreatePayload) {
+  const response = await apiClient.post<TicketMessageRead>(`/tickets/${ticketId}/messages`, payload);
   return response.data;
 }

@@ -2,9 +2,10 @@
 
 ## 1. 当前进度
 
-- 当前完成到：Step 37 - README、架构图、演示脚本、简历包装
-- 当前日期：2026-06-02
+- 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
+- 当前日期：2026-06-24
 - 当前状态：部分可运行
+- 最近一次变更：前端工单详情页新增沟通记录录入功能（2026-06-24）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -27,6 +28,68 @@
 - 已补充 backend/app 函数级说明文档，并为核心后端文件增加中文阅读注释
 
 ## 3. 本次 Step 详细记录
+
+### 功能增强 (2026-06-24)：前端工单详情页添加沟通记录录入
+
+#### 目标
+
+在工单详情页的 Messages / Conversation history 区域增加消息录入表单，支持选择发送方类型并输入沟通内容，将新增消息通过后端 API 写入并即时刷新消息列表。
+
+#### 实际完成内容
+
+- 在 `frontend/src/api/tickets.ts` 中新增 `TicketMessageCreatePayload` 类型和 `addTicketMessage` API 函数
+- 在 `frontend/src/pages/TicketDetailPage.tsx` 中新增消息录入 UI（sender_type 下拉选择 + textarea + Send 按钮）
+- 实现 `handleSendMessage` 处理函数：空内容校验、API 调用、成功清空输入并刷新消息、错误提示
+- 遵循已有页面风格、状态管理模式和错误处理模式，未修改无关代码
+
+#### 新增文件
+
+- 无
+
+#### 修改文件
+
+- `frontend/src/api/tickets.ts` — 新增 `TicketMessageCreatePayload` 类型和 `addTicketMessage` 函数
+- `frontend/src/pages/TicketDetailPage.tsx` — 新增消息录入表单和发送处理逻辑
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无
+
+#### API 变化
+
+- 新增：前端调用已存在的 `POST /api/tickets/{ticket_id}/messages` 接口（该接口由后端正 Step 07 实现）
+
+#### 前端变化
+
+- 工单详情页 Messages 面板新增消息录入表单（sender_type 选择 + 内容输入 + 发送按钮）
+- 发送成功后自动清空输入并刷新消息列表
+- 空内容提交和 API 失败均有对应的错误提示
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 无
+
+#### 验证记录
+
+- 执行 `npm run build`（TypeScript 编译 + Vite 构建），通过，0 错误
+- 构建产物：dist/assets/index-BZBqgUOb.js (311.27 kB), dist/assets/index-BmliYFJ3.css (18.51 kB)
+
+#### Phase 2 优化 (2026-06-24)：沟通记录模块 UI 优化
+
+- 成功提示 Message sent successfully 增加 3 秒自动消失（useEffect + setTimeout + isMountedRef guard）
+- 新增 `handleClearMessage` 清空函数：一键重置消息内容、错误和成功提示
+- 表单与历史记录区域互换位置：录入表单在上，对话历史在下，更符合使用习惯
+- 录入区标题改为 "Add communication record"，历史区单独显示 "Conversation history" 小标题
+- 按钮样式优化：Send 按钮文字简化为 "Send"，新增 ghost-button 风格的 Clear 按钮，两按钮并排 flex 布局
+- 重复验证 `npm run build`，通过，0 错误
+- 构建产物：dist/assets/index-CbzzYKx8.js (311.73 kB), dist/assets/index-BmliYFJ3.css (18.51 kB)
+
+---
 
 ### Step 编号
 

@@ -24,6 +24,7 @@ import {
   type TicketClassification,
 } from "../api/ai";
 import {
+  addTicketMessage,
   getTicket,
   listTicketMessages,
   TICKET_STATUSES,
@@ -275,6 +276,12 @@ export default function TicketDetailPage() {
   const [reviewDraftContent, setReviewDraftContent] = useState("");
   const [reviewRejectReason, setReviewRejectReason] = useState("");
 
+  const [messageContent, setMessageContent] = useState("");
+  const [messageSenderType, setMessageSenderType] = useState<"agent" | "customer" | "ai" | "system">("agent");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [sendMessageError, setSendMessageError] = useState<string | null>(null);
+  const [sendMessageSuccess, setSendMessageSuccess] = useState<string | null>(null);
+
   const latestSuggestion = suggestions[0] ?? null;
   const agentCards = useMemo(
     () => (multiAgentResult ? buildAgentCards(multiAgentResult) : []),
@@ -303,6 +310,20 @@ export default function TicketDetailPage() {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!sendMessageSuccess) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (isMountedRef.current) {
+        setSendMessageSuccess(null);
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [sendMessageSuccess]);
 
   async function loadSuggestions(currentTicketId: number) {
     setLoadingSuggestions(true);
@@ -562,6 +583,47 @@ export default function TicketDetailPage() {
     } finally {
       setIsSubmittingReview(false);
     }
+  }
+
+  async function handleSendMessage() {
+    if (!ticket) {
+      return;
+    }
+
+    const trimmedContent = messageContent.trim();
+    if (!trimmedContent) {
+      setSendMessageError("Message content cannot be empty.");
+      return;
+    }
+
+    setIsSendingMessage(true);
+    setSendMessageError(null);
+    setSendMessageSuccess(null);
+
+    try {
+      await addTicketMessage(ticket.id, {
+        sender_type: messageSenderType,
+        content: trimmedContent,
+      });
+      setMessageContent("");
+      setSendMessageSuccess("Message sent successfully.");
+      const messageData = await listTicketMessages(ticket.id);
+      if (isMountedRef.current) {
+        setMessages(messageData);
+      }
+    } catch {
+      setSendMessageError("Failed to send message. Please try again.");
+    } finally {
+      if (isMountedRef.current) {
+        setIsSendingMessage(false);
+      }
+    }
+  }
+
+  function handleClearMessage() {
+    setMessageContent("");
+    setSendMessageError(null);
+    setSendMessageSuccess(null);
   }
 
   async function handleRunMultiAgent() {
@@ -1108,6 +1170,66 @@ export default function TicketDetailPage() {
             <div className="panel-heading">
               <div>
                 <p className="panel-tag">Messages</p>
+                <h3>Add communication record</h3>
+              </div>
+            </div>
+
+            <div className="panel-actions">
+              <div className="field">
+                <label htmlFor="msg-sender-type">Sender type</label>
+                <select
+                  id="msg-sender-type"
+                  value={messageSenderType}
+                  onChange={(event_) =>
+                    setMessageSenderType(
+                      event_.target.value as "agent" | "customer" | "ai" | "system",
+                    )
+                  }
+                >
+                  <option value="agent">Agent</option>
+                  <option value="customer">Customer</option>
+                  <option value="ai">AI</option>
+                  <option value="system">System</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="msg-content">Message content</label>
+                <textarea
+                  id="msg-content"
+                  rows={3}
+                  placeholder="Enter the communication record..."
+                  value={messageContent}
+                  onChange={(event_) => setMessageContent(event_.target.value)}
+                />
+              </div>
+              {sendMessageError ? (
+                <p className="form-error">{sendMessageError}</p>
+              ) : null}
+              {sendMessageSuccess ? (
+                <p className="form-success">{sendMessageSuccess}</p>
+              ) : null}
+              <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.25rem", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={isSendingMessage}
+                  onClick={() => void handleSendMessage()}
+                >
+                  {isSendingMessage ? "Sending..." : "Send"}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => handleClearMessage()}
+                  disabled={isSendingMessage}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div className="panel-heading" style={{ marginTop: "1.5rem" }}>
+              <div>
                 <h3>Conversation history</h3>
               </div>
             </div>
