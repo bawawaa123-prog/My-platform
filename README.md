@@ -2,6 +2,46 @@
 
 基于 FastAPI + RAG + LangGraph Multi-Agent + FastMCP 的企业级智能工单处理平台，面向客服、IT 支持、售后和 HR 服务台等场景，支持知识库检索、历史相似工单推荐、AI 回复草稿生成、人工审核、多 Agent 协作分析和 MCP 对外开放。
 
+## 快速启动
+
+### 后端
+
+```bash
+cd backend
+D:\tools\anaconda\envs\py312\python.exe -m pip install -r requirements.txt
+D:\tools\anaconda\envs\py312\python.exe -m app.db.init_db
+D:\tools\anaconda\envs\py312\python.exe scripts/seed_data.py
+D:\tools\anaconda\envs\py312\python.exe -m uvicorn app.main:app --reload --port 8010
+```
+
+后端地址：`http://localhost:8010`，Health 检查：`http://localhost:8010/health`
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端地址：`http://localhost:5173`，默认通过 `/api` 代理请求到本地后端。
+
+### 默认环境变量（mock 模式，无需真实 API Key）
+
+```bash
+DATABASE_URL=sqlite:///./backend/app.db
+LLM_PROVIDER=mock
+EMBEDDING_PROVIDER=fake
+```
+
+### 测试账号
+
+| 角色 | 邮箱 | 密码 |
+|------|------|------|
+| Admin | admin@example.com | admin123 |
+| Agent | agent@example.com | agent123 |
+| Viewer | viewer@example.com | viewer123 |
+
 ## 项目背景
 
 很多 AI 项目停留在“聊天机器人”层面，但企业实际更关心的是可控流程、审核机制、系统集成和业务闭环。这个项目以“企业工单系统”为主体，把 AI 能力嵌入到真实业务链路里：
