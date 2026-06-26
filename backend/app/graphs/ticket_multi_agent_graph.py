@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 from sqlalchemy.orm import Session
 
 from app.agents.knowledge_agent import KnowledgeAgent
@@ -18,7 +18,8 @@ from app.agents.supervisor_agent import SupervisorAgent
 from app.agents.triage_agent import TriageAgent
 from app.agents.workflow_agent import WorkflowAgent
 from app.graphs.ticket_multi_agent_state import TicketMultiAgentState
-from app.schemas.ai import AIMultiAgentPendingReviewRead, AIReplyDraftRead
+from app.schemas.ai import AIMultiAgentPendingReviewRead, AIMultiAgentProcessRead, AIReplyDraftRead
+from app.services.review_service import ReviewService
 from app.schemas.ticket import TicketRead
 from app.services.agent_run_service import AgentRunService
 from app.services.ticket_service import TicketService
@@ -34,6 +35,7 @@ class TicketMultiAgentGraph:
         self.db = db
         self.ticket_service = TicketService(db)
         self.agent_run_service = AgentRunService(db)
+        self.review_service = ReviewService(db)
         self.supervisor_agent = SupervisorAgent(db)
         self.triage_agent = TriageAgent(db)
         self.knowledge_agent = KnowledgeAgent(db)
@@ -206,6 +208,58 @@ class TicketMultiAgentGraph:
             confidence=reply_suggestion.confidence,
             audit_trail=values.get("audit_trail", []),
         )
+
+    def resume(
+        self,
+        *,
+        workflow_id: str,
+        ticket_id: int,
+        action: str,
+        reviewer_user_id: int,
+        final_content: str | None = None,
+        reject_reason: str | None = None,
+    ) -> AIMultiAgentProcessRead:
+        # resume 把审核动作通过 Command 送回 LangGraph checkpoint，
+        # 让 human_review -> finalize 继续执行。
+        config = {"configurable": {"thread_id": workflow_id}}
+        snapshot = self.graph.get_state(config)
+        if not snapshot.next:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No interrupted multi-agent workflow found for the provided thread_id/run_id.",
+            )
+        if snapshot.values.get("ticket_id") != ticket_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Workflow thread_id/run_id does not belong to the requested ticket.",
+            )
+
+        review_command = {
+            "action": action,
+            "reviewer_user_id": reviewer_user_id,
+            "final_content": final_content,
+            "reject_reason": reject_reason,
+        }
+        state = self.graph.invoke(Command(resume=review_command), config)
+        final_output = state.get("final_output")
+        if not final_output:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Multi-agent workflow resume did not produce a final output.",
+            )
+
+        # 持久化 resume 结果到 AgentRunLog
+        self.agent_run_service.upsert_run_log(
+            ticket_id=ticket_id,
+            run_id=workflow_id,
+            run_type="multi_agent",
+            status="completed",
+            input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
+            output_json=final_output,
+            audit_trail_json=final_output.get("audit_trail", []),
+        )
+
+        return AIMultiAgentProcessRead.model_validate(final_output)
 
     def _build_graph(self):
         # 当前版本采用固定顺序图，优先保证演示稳定性和输出可解释性。
@@ -462,10 +516,25 @@ class TicketMultiAgentGraph:
             ],
             "confidence": reply_suggestion.confidence,
         }
+        # interrupt 暂停图执行；resume 时 decision 携带审核动作回来，
+        # 再通过 review_service 持久化到数据库。
         decision = interrupt(payload)
+        reviewed = self.review_service.apply_review_action(
+            suggestion_id=reply_suggestion.id,
+            action=decision["action"],
+            current_user=self.ticket_service.get_user_by_id(decision["reviewer_user_id"]),
+            final_content=decision.get("final_content"),
+            reject_reason=decision.get("reject_reason"),
+        )
         return {
             "human_review_payload": payload,
-            "review_decision": decision,
+            "review_decision": {
+                "action": decision["action"],
+                "reviewer_user_id": decision["reviewer_user_id"],
+                "final_content": decision.get("final_content"),
+                "reject_reason": decision.get("reject_reason"),
+            },
+            "reviewed_suggestion": AIReplyDraftRead.model_validate(reviewed).model_dump(mode="json"),
         }
 
     def _finalize(self, state: TicketMultiAgentState) -> TicketMultiAgentState:
@@ -481,6 +550,7 @@ class TicketMultiAgentGraph:
                 "workflow_result": state["workflow_result"],
                 "audit_trail": state.get("audit_trail", []),
                 "review_decision": state.get("review_decision"),
+                "reviewed_suggestion": state.get("reviewed_suggestion"),
             }
         }
 

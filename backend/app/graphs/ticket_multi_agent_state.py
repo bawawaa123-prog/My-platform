@@ -18,4 +18,5 @@ class TicketMultiAgentState(TypedDict, total=False):
     audit_trail: list[dict[str, Any]]
     human_review_payload: dict[str, Any]
     review_decision: dict[str, Any]
+    reviewed_suggestion: dict[str, Any]
     final_output: dict[str, Any]

@@ -144,6 +144,28 @@ export type AIMultiAgentPendingReviewRead = {
   audit_trail: AgentAuditTrailItem[];
 };
 
+export type MultiAgentResumePayload = {
+  action: "approve" | "edit" | "reject";
+  thread_id?: string;
+  run_id?: string;
+  final_content?: string;
+  reject_reason?: string;
+};
+
+export type AIMultiAgentProcessRead = {
+  ticket: Record<string, unknown>;
+  supervisor_result: MultiAgentSupervisorResult;
+  triage_result: MultiAgentTriageResult;
+  knowledge_result: MultiAgentKnowledgeResult;
+  similar_case_result: MultiAgentSimilarCaseResult;
+  reply_result: MultiAgentReplyResult;
+  risk_result: MultiAgentRiskResult;
+  workflow_result: MultiAgentWorkflowResult;
+  audit_trail: AgentAuditTrailItem[];
+  review_decision: Record<string, unknown> | null;
+  reviewed_suggestion: AIReplyDraftRead | null;
+};
+
 export type AgentRunLogRead = {
   id: number;
   ticket_id: number;
@@ -192,6 +214,17 @@ export async function rejectSuggestion(suggestionId: number, payload: Suggestion
 export async function startMultiAgentProcess(ticketId: number) {
   const response = await apiClient.post<AIMultiAgentPendingReviewRead>(
     `/ai/tickets/${ticketId}/multi-agent-process/start`,
+  );
+  return response.data;
+}
+
+export async function resumeMultiAgentProcess(
+  ticketId: number,
+  payload: MultiAgentResumePayload,
+) {
+  const response = await apiClient.post<AIMultiAgentProcessRead>(
+    `/ai/tickets/${ticketId}/multi-agent-process/resume`,
+    payload,
   );
   return response.data;
 }

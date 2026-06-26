@@ -9,10 +9,12 @@ import {
   listTicketAgentRuns,
   listTicketSuggestions,
   rejectSuggestion,
+  resumeMultiAgentProcess,
   startMultiAgentProcess,
   type AgentAuditTrailItem,
   type AgentRunLogRead,
   type AIMultiAgentPendingReviewRead,
+  type AIMultiAgentProcessRead,
   type AIReplyDraftRead,
   type MultiAgentKnowledgeResult,
   type MultiAgentReplyResult,
@@ -272,6 +274,12 @@ export default function TicketDetailPage() {
   const [aiActionErrorMessage, setAiActionErrorMessage] = useState<string | null>(null);
   const [reviewSuccessMessage, setReviewSuccessMessage] = useState<string | null>(null);
   const [multiAgentSuccessMessage, setMultiAgentSuccessMessage] = useState<string | null>(null);
+  const [isSubmittingMultiAgentReview, setIsSubmittingMultiAgentReview] = useState(false);
+  const [multiAgentReviewError, setMultiAgentReviewError] = useState<string | null>(null);
+  const [multiAgentReviewSuccess, setMultiAgentReviewSuccess] = useState<string | null>(null);
+  const [multiAgentResumeResult, setMultiAgentResumeResult] = useState<AIMultiAgentProcessRead | null>(null);
+  const [multiAgentReviewDraftContent, setMultiAgentReviewDraftContent] = useState("");
+  const [multiAgentReviewRejectReason, setMultiAgentReviewRejectReason] = useState("");
 
   const [reviewDraftContent, setReviewDraftContent] = useState("");
   const [reviewRejectReason, setReviewRejectReason] = useState("");
@@ -636,12 +644,18 @@ export default function TicketDetailPage() {
     setAiActionErrorMessage(null);
     setReviewSuccessMessage(null);
     setMultiAgentSuccessMessage(null);
+    setMultiAgentReviewError(null);
+    setMultiAgentReviewSuccess(null);
+    setMultiAgentResumeResult(null);
+    setMultiAgentReviewDraftContent("");
+    setMultiAgentReviewRejectReason("");
 
     try {
       const result = await startMultiAgentProcess(ticket.id);
       setMultiAgentResult(result);
       setClassification(result.triage_result.classification);
       setTicket(result.ticket);
+      setMultiAgentReviewDraftContent(result.draft_reply.suggested_content);
       setMultiAgentSuccessMessage(
         "Multi-agent analysis completed and paused at human review. The latest agent outputs are shown below.",
       );
@@ -651,6 +665,92 @@ export default function TicketDetailPage() {
       setAgentRunsErrorMessage("Multi-agent analysis failed. Please try again.");
     } finally {
       setIsRunningMultiAgent(false);
+    }
+  }
+
+  async function handleMultiAgentApprove() {
+    if (!ticket || !multiAgentResult) {
+      return;
+    }
+
+    setIsSubmittingMultiAgentReview(true);
+    setMultiAgentReviewError(null);
+    setMultiAgentReviewSuccess(null);
+
+    try {
+      const result = await resumeMultiAgentProcess(ticket.id, {
+        action: "approve",
+        run_id: multiAgentResult.run_id,
+      });
+      setMultiAgentResumeResult(result);
+      setMultiAgentReviewSuccess("Multi-agent reply approved and finalized.");
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+    } catch {
+      setMultiAgentReviewError("Approve action failed. Please try again.");
+    } finally {
+      setIsSubmittingMultiAgentReview(false);
+    }
+  }
+
+  async function handleMultiAgentEdit() {
+    if (!ticket || !multiAgentResult) {
+      return;
+    }
+
+    const finalContent = multiAgentReviewDraftContent.trim();
+    if (!finalContent) {
+      setMultiAgentReviewError("Edited final reply cannot be empty.");
+      return;
+    }
+
+    setIsSubmittingMultiAgentReview(true);
+    setMultiAgentReviewError(null);
+    setMultiAgentReviewSuccess(null);
+
+    try {
+      const result = await resumeMultiAgentProcess(ticket.id, {
+        action: "edit",
+        run_id: multiAgentResult.run_id,
+        final_content: finalContent,
+      });
+      setMultiAgentResumeResult(result);
+      setMultiAgentReviewSuccess("Multi-agent reply saved with human edits.");
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+    } catch {
+      setMultiAgentReviewError("Edit action failed. Please try again.");
+    } finally {
+      setIsSubmittingMultiAgentReview(false);
+    }
+  }
+
+  async function handleMultiAgentReject() {
+    if (!ticket || !multiAgentResult) {
+      return;
+    }
+
+    const rejectReason = multiAgentReviewRejectReason.trim();
+    if (!rejectReason) {
+      setMultiAgentReviewError("Please enter a reject reason before rejecting.");
+      return;
+    }
+
+    setIsSubmittingMultiAgentReview(true);
+    setMultiAgentReviewError(null);
+    setMultiAgentReviewSuccess(null);
+
+    try {
+      const result = await resumeMultiAgentProcess(ticket.id, {
+        action: "reject",
+        run_id: multiAgentResult.run_id,
+        reject_reason: rejectReason,
+      });
+      setMultiAgentResumeResult(result);
+      setMultiAgentReviewSuccess("Multi-agent reply rejected.");
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+    } catch {
+      setMultiAgentReviewError("Reject action failed. Please try again.");
+    } finally {
+      setIsSubmittingMultiAgentReview(false);
     }
   }
 
@@ -1162,6 +1262,105 @@ export default function TicketDetailPage() {
                     ))}
                   </div>
                 </article>
+
+                {!multiAgentResumeResult ? (
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Human Review</p>
+                        <h3>Approve, edit, or reject the multi-agent draft</h3>
+                      </div>
+                    </div>
+
+                    <div className="panel-actions">
+                      <div className="field">
+                        <label htmlFor="ma-review-draft">Draft reply (edit before approving if needed)</label>
+                        <textarea
+                          id="ma-review-draft"
+                          rows={4}
+                          value={multiAgentReviewDraftContent}
+                          onChange={(event_) => setMultiAgentReviewDraftContent(event_.target.value)}
+                        />
+                      </div>
+
+                      <div className="field">
+                        <label htmlFor="ma-reject-reason">Reject reason (required when rejecting)</label>
+                        <textarea
+                          id="ma-reject-reason"
+                          rows={2}
+                          placeholder="Enter a reason for rejecting this draft..."
+                          value={multiAgentReviewRejectReason}
+                          onChange={(event_) => setMultiAgentReviewRejectReason(event_.target.value)}
+                        />
+                      </div>
+
+                      {multiAgentReviewError ? (
+                        <p className="form-error">{multiAgentReviewError}</p>
+                      ) : null}
+                      {multiAgentReviewSuccess ? (
+                        <p className="form-success">{multiAgentReviewSuccess}</p>
+                      ) : null}
+
+                      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.25rem" }}>
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={isSubmittingMultiAgentReview}
+                          onClick={handleMultiAgentApprove}
+                        >
+                          {isSubmittingMultiAgentReview ? "Processing..." : "Approve as drafted"}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          disabled={isSubmittingMultiAgentReview}
+                          onClick={handleMultiAgentEdit}
+                        >
+                          {isSubmittingMultiAgentReview ? "Saving..." : "Save edits"}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button ghost-button--danger"
+                          disabled={isSubmittingMultiAgentReview}
+                          onClick={handleMultiAgentReject}
+                        >
+                          {isSubmittingMultiAgentReview ? "Rejecting..." : "Reject"}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ) : (
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Review Complete</p>
+                        <h3>Multi-agent workflow finalized</h3>
+                      </div>
+                      <span className="badge badge--score">
+                        {multiAgentResumeResult.review_decision
+                          ? toLabel(String(multiAgentResumeResult.review_decision.action ?? "completed"))
+                          : "Completed"}
+                      </span>
+                    </div>
+
+                    {multiAgentResumeResult.reviewed_suggestion ? (
+                      <div className="panel-actions">
+                        <div className="agent-card__summary">
+                          <span>Status</span>
+                          <strong>{multiAgentResumeResult.reviewed_suggestion.status}</strong>
+                          <p>{multiAgentResumeResult.reviewed_suggestion.final_content
+                            ?? multiAgentResumeResult.reviewed_suggestion.suggested_content}</p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {multiAgentReviewSuccess ? (
+                      <p className="form-success" style={{ marginTop: "0.5rem" }}>
+                        {multiAgentReviewSuccess}
+                      </p>
+                    ) : null}
+                  </article>
+                )}
               </div>
             ) : null}
           </article>

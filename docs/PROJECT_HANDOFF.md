@@ -3,9 +3,9 @@
 ## 1. 当前进度
 
 - 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
-- 当前日期：2026-06-24
+- 当前日期：2026-06-26
 - 当前状态：部分可运行
-- 最近一次变更：前端工单详情页新增沟通记录录入功能（2026-06-24）
+- 最近一次变更：补全 Multi-Agent resume 功能，实现完整 Multi-Agent 工作流闭环（2026-06-26）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -88,6 +88,25 @@
 - 按钮样式优化：Send 按钮文字简化为 "Send"，新增 ghost-button 风格的 Clear 按钮，两按钮并排 flex 布局
 - 重复验证 `npm run build`，通过，0 错误
 - 构建产物：dist/assets/index-CbzzYKx8.js (311.73 kB), dist/assets/index-BmliYFJ3.css (18.51 kB)
+
+#### 功能增强 (2026-06-26)：Multi-Agent resume 工作流闭环
+
+- 补全 `POST /api/ai/tickets/{ticket_id}/multi-agent-process/resume` 端点，与单流程 resume 对称
+- 在 `backend/app/schemas/ai.py` 新增 `AIMultiAgentProcessRead` 响应模型
+- 在 `backend/app/graphs/ticket_multi_agent_graph.py`：
+  - 新增 `resume()` 方法：校验 checkpoint、通过 `Command(resume=...)` 恢复图执行、持久化 AgentRunLog
+  - 修复 `_human_review` 节点：resume 时通过 `ReviewService.apply_review_action()` 持久化审核结果到数据库
+  - 更新 `_finalize` 节点：输出包含 `reviewed_suggestion`
+- 在 `backend/app/graphs/ticket_multi_agent_state.py` 新增 `reviewed_suggestion` 状态字段
+- 在 `backend/app/api/ai.py` 新增 resume 路由
+- 前端 `frontend/src/api/ai.ts` 新增 `MultiAgentResumePayload`、`AIMultiAgentProcessRead` 类型和 `resumeMultiAgentProcess` API 函数
+- 前端 `frontend/src/pages/TicketDetailPage.tsx`：
+  - 新增 Multi-Agent 审核状态（isSubmittingMultiAgentReview、multiAgentReviewError/Success 等）
+  - 新增三个审核处理函数：handleMultiAgentApprove、handleMultiAgentEdit、handleMultiAgentReject
+  - 新增审核 UI：Draft reply 编辑框 + Reject reason 输入框 + Approve/Save edits/Reject 按钮
+  - 审核完成后展示 Review Complete 卡片，显示审核状态和最终建议内容
+- 验证：后端模块导入无报错，前端 `npm run build` 通过，0 错误
+- 构建产物：dist/assets/index-BsB5kA7O.js (315.25 kB), dist/assets/index-BmliYFJ3.css (18.51 kB)
 
 ---
 

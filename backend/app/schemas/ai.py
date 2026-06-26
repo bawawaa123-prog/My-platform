@@ -96,6 +96,20 @@ class AIMultiAgentPendingReviewRead(BaseModel):
     audit_trail: list[dict]
 
 
+class AIMultiAgentProcessRead(BaseModel):
+    ticket: dict
+    supervisor_result: dict
+    triage_result: dict
+    knowledge_result: dict
+    similar_case_result: dict
+    reply_result: dict
+    risk_result: dict
+    workflow_result: dict
+    audit_trail: list[dict] = []
+    review_decision: dict | None = None
+    reviewed_suggestion: dict | None = None
+
+
 class AIWorkflowResumeRequest(BaseModel):
     action: Literal["approve", "edit", "reject"]
     thread_id: str | None = None

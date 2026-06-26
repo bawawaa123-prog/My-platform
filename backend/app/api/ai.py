@@ -9,6 +9,7 @@ from app.models.user import User
 from app.schemas.agent import AgentRunLogRead
 from app.schemas.ai import (
     AIMultiAgentPendingReviewRead,
+    AIMultiAgentProcessRead,
     AIReplyDraftRead,
     AIWorkflowPendingReviewRead,
     AIWorkflowProcessRead,
@@ -139,6 +140,34 @@ def start_multi_agent_ticket_process(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Multi-agent workflow start failed: {exc}",
+        ) from exc
+
+
+@router.post("/tickets/{ticket_id}/multi-agent-process/resume", response_model=AIMultiAgentProcessRead)
+def resume_multi_agent_ticket_process(
+    ticket_id: int,
+    payload: AIWorkflowResumeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AIMultiAgentProcessRead:
+    # 与单流程 resume 对称：把审核决策送回 Multi-Agent 图，
+    # 让 human_review -> finalize 走完并持久化审核结果。
+    TicketService(db).get_ticket(ticket_id)
+    try:
+        return TicketMultiAgentGraph(db).resume(
+            workflow_id=payload.workflow_id(),
+            ticket_id=ticket_id,
+            action=payload.action,
+            reviewer_user_id=current_user.id,
+            final_content=payload.final_content,
+            reject_reason=payload.reject_reason,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Multi-agent workflow resume failed: {exc}",
         ) from exc
 
 
