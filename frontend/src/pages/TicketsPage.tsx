@@ -7,6 +7,7 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   type TicketCategory,
+  type TicketListFilters,
   type TicketPriority,
   type TicketRead,
   type TicketStatus,
@@ -45,7 +46,17 @@ export default function TicketsPage() {
       setErrorMessage(null);
 
       try {
-        const data = await listTickets();
+        const filters: TicketListFilters = {};
+        if (statusFilter !== "all") {
+          filters.status = statusFilter;
+        }
+        if (priorityFilter !== "all") {
+          filters.priority = priorityFilter;
+        }
+        if (categoryFilter !== "all") {
+          filters.category = categoryFilter;
+        }
+        const data = await listTickets(filters);
         if (!active) {
           return;
         }
@@ -67,20 +78,7 @@ export default function TicketsPage() {
     return () => {
       active = false;
     };
-  }, []);
-
-  const filteredTickets = tickets.filter((ticket) => {
-    if (statusFilter !== "all" && ticket.status !== statusFilter) {
-      return false;
-    }
-    if (priorityFilter !== "all" && ticket.priority !== priorityFilter) {
-      return false;
-    }
-    if (categoryFilter !== "all" && ticket.category !== categoryFilter) {
-      return false;
-    }
-    return true;
-  });
+  }, [statusFilter, priorityFilter, categoryFilter]);
 
   const openCount = tickets.filter((ticket) =>
     ["open", "ai_processing", "waiting_review", "in_progress"].includes(ticket.status),
@@ -112,7 +110,7 @@ export default function TicketsPage() {
           <span className="stat-panel__label">Open workload</span>
         </article>
         <article className="panel stat-panel">
-          <span className="stat-panel__value">{filteredTickets.length}</span>
+          <span className="stat-panel__value">{tickets.length}</span>
           <span className="stat-panel__label">Current result set</span>
         </article>
       </section>
@@ -187,11 +185,11 @@ export default function TicketsPage() {
 
         {loading ? <p className="panel-state">Loading ticket records...</p> : null}
         {errorMessage ? <p className="form-error">{errorMessage}</p> : null}
-        {!loading && !errorMessage && filteredTickets.length === 0 ? (
+        {!loading && !errorMessage && tickets.length === 0 ? (
           <p className="panel-state">No tickets match the selected filters.</p>
         ) : null}
 
-        {!loading && !errorMessage && filteredTickets.length > 0 ? (
+        {!loading && !errorMessage && tickets.length > 0 ? (
           <div className="ticket-table-wrapper">
             <table className="ticket-table">
               <thead>
@@ -205,7 +203,7 @@ export default function TicketsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTickets.map((ticket) => (
+                {tickets.map((ticket) => (
                   <tr key={ticket.id}>
                     <td>
                       <Link to={`/tickets/${ticket.id}`} className="ticket-link">

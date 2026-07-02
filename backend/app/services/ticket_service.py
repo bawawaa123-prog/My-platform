@@ -58,8 +58,14 @@ class TicketService:
         )
         return created_ticket
 
-    def list_tickets(self) -> list[Ticket]:
-        return self.repository.list_all()
+    def list_tickets(
+        self,
+        *,
+        status: str | None = None,
+        priority: str | None = None,
+        category: str | None = None,
+    ) -> list[Ticket]:
+        return self.repository.list_filtered(status=status, priority=priority, category=category)
 
     def list_open_tickets(self, *, limit: int = 20) -> list[Ticket]:
         tickets = self.repository.list_all()

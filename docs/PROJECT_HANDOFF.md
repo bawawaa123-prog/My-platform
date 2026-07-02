@@ -3,9 +3,9 @@
 ## 1. 当前进度
 
 - 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
-- 当前日期：2026-06-26
-- 当前状态：部分可运行
-- 最近一次变更：补全 Multi-Agent resume 功能，实现完整 Multi-Agent 工作流闭环（2026-06-26）
+- 当前日期：2026-07-02
+- 当前状态：可运行
+- 最近一次变更：工单列表筛选从"前端本地过滤"升级为"后端接口过滤"（2026-07-02）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -203,7 +203,64 @@ Step 37
   - `backend/app/graphs/ticket_agent_graph.py`
   - `backend/app/graphs/ticket_multi_agent_graph.py`
   - `backend/app/mcp/server.py`
-- 注释策略以“关键入口、关键流程、关键副作用”为主，避免把所有代码注释得过重
+- 注释策略以”关键入口、关键流程、关键副作用”为主，避免把所有代码注释得过重
+
+---
+
+### 功能增强 (2026-07-02)：工单列表筛选后端化 + 前端对接
+
+#### 目标
+
+将工单列表筛选从”前端本地 `tickets.filter(...)`”升级为”后端 Query 参数过滤”，支持 status / priority / category 单独和组合过滤，并补充后端 pytest 测试和前端 API 对接。
+
+#### 实际完成内容
+
+- 修复 `ticket_repository.py` 的 `list_filtered` 方法，补充缺失的 `category` 参数（service 层已在传但 repository 未接收）
+- 在 `test_tickets.py` 新增 6 个过滤测试：单 status / priority / category 过滤、组合过滤、非法参数 422、无参数基线
+- 修改 `frontend/src/api/tickets.ts`，新增 `TicketListFilters` 类型，`listTickets` 支持可选的 `filters` 参数并通过 axios params 传给后端
+- 修改 `frontend/src/pages/TicketsPage.tsx`：`useEffect` 依赖筛选条件变化时重新请求后端，删除本地 `filteredTickets` 变量
+- 筛选控件保持不变；当筛选值为 `”all”` 时不传对应 Query 参数
+
+#### 新增文件
+
+- 无
+
+#### 修改文件
+
+- `backend/app/repositories/ticket_repository.py` — `list_filtered` 增加 `category` 参数
+- `backend/tests/test_tickets.py` — 新增 6 个过滤测试
+- `frontend/src/api/tickets.ts` — 新增 `TicketListFilters` 类型，`listTickets` 支持 filters
+- `frontend/src/pages/TicketsPage.tsx` — `useEffect` 根据筛选条件重新请求，删除本地过滤逻辑
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无
+
+#### API 变化
+
+- `GET /api/tickets` 已支持 `status` / `priority` / `category` 可选 Query 参数（后端此前已实现，本次补充 category 过滤并补齐测试）
+
+#### 前端变化
+
+- `TicketsPage` 筛选条件变化时发起新请求到 `/api/tickets?status=...&priority=...&category=...`
+- 删除 `filteredTickets` 本地过滤变量，页面直接展示后端返回结果
+- 筛选控件 UI 不变
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 无
+
+#### 验证记录
+
+- `python -m pytest tests/test_tickets.py -q`：7 passed（含 1 个原有 + 6 个新增）
+- `python -m pytest -q`：12 passed（全部测试通过）
+- `npm run build`：TypeScript 编译 + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-D7C5mfYN.js (315.40 kB)
 
 ## 4. 验证记录
 

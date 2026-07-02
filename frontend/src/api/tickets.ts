@@ -86,8 +86,24 @@ export type TicketMessageCreatePayload = {
   sender_name?: string;
 };
 
-export async function listTickets() {
-  const response = await apiClient.get<TicketRead[]>("/tickets");
+export type TicketListFilters = {
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  category?: TicketCategory;
+};
+
+export async function listTickets(filters?: TicketListFilters) {
+  const params: Record<string, string> = {};
+  if (filters?.status) {
+    params.status = filters.status;
+  }
+  if (filters?.priority) {
+    params.priority = filters.priority;
+  }
+  if (filters?.category) {
+    params.category = filters.category;
+  }
+  const response = await apiClient.get<TicketRead[]>("/tickets", { params });
   return response.data;
 }
 

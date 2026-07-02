@@ -1,4 +1,12 @@
-from fastapi import APIRouter, Depends
+'''
+Author: Bwaw. 1294245800@qq.com
+Date: 2026-05-30 16:12:09
+LastEditors: Bwaw. 1294245800@qq.com
+LastEditTime: 2026-07-02 14:54:31
+FilePath: \My-platform\backend\app\api\tickets.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
+from fastapi import APIRouter, Depends,Query
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -8,7 +16,11 @@ from app.schemas.ticket import SimilarTicketRead, TicketCreate, TicketRead, Tick
 from app.schemas.ticket_message import TicketMessageCreate, TicketMessageRead
 from app.services.ticket_similarity_service import TicketSimilarityService
 from app.services.ticket_service import TicketService
-
+from app.schemas.ticket import (
+    TicketStatus,
+    TicketPriority,
+    TicketCategory,
+)
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
@@ -25,10 +37,13 @@ def create_ticket(
 
 @router.get("", response_model=list[TicketRead])
 def list_tickets(
+    status: TicketStatus | None = Query(default=None),
+    priority: TicketPriority | None = Query(default=None),
+    category: TicketCategory | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[TicketRead]:
-    tickets = TicketService(db).list_tickets()
+    tickets = TicketService(db).list_tickets(status=status, priority=priority, category=category)
     return [TicketRead.model_validate(ticket) for ticket in tickets]
 
 

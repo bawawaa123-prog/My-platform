@@ -1,3 +1,11 @@
+'''
+Author: Bwaw. 1294245800@qq.com
+Date: 2026-05-30 16:12:09
+LastEditors: Bwaw. 1294245800@qq.com
+LastEditTime: 2026-07-02 10:46:15
+FilePath: \My-platform\backend\app\repositories\ticket_repository.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,8 +41,33 @@ class TicketRepository:
         )
         return list(self.db.scalars(statement).all())
 
+
+    def list_filtered(
+        self,
+        status: str | None = None,
+        priority: str | None = None,
+        category: str | None = None,
+        assignee_id: int | None = None,
+    ) -> list[Ticket]:
+        statement = select(Ticket)
+
+        if status:
+            statement = statement.where(Ticket.status == status)
+        if priority:
+            statement = statement.where(Ticket.priority == priority)
+        if category:
+            statement = statement.where(Ticket.category == category)
+        if assignee_id:
+            statement = statement.where(Ticket.assignee_id == assignee_id)
+
+        statement = statement.order_by(Ticket.created_at.desc(), Ticket.id.desc())
+        return list(self.db.scalars(statement).all())
+
+
     def save(self, ticket: Ticket) -> Ticket:
         self.db.add(ticket)
         self.db.commit()
         self.db.refresh(ticket)
         return ticket
+
+
