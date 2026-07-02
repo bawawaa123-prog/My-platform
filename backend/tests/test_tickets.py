@@ -207,3 +207,190 @@ def test_list_tickets_no_filter_returns_all(
     items = response.json()
     assert any(item["id"] == ticket_a["id"] for item in items)
     assert any(item["id"] == ticket_b["id"] for item in items)
+
+
+# ---------------------------------------------------------------------------
+# Pagination tests: /api/tickets/page
+# ---------------------------------------------------------------------------
+
+
+def test_list_tickets_page_returns_items_total_limit_offset(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """GET /api/tickets/page?limit=2&offset=0 returns correct pagination structure."""
+    create_ticket(title="Ticket 1")
+    create_ticket(title="Ticket 2")
+    create_ticket(title="Ticket 3")
+
+    response = client.get(
+        "/api/tickets/page?limit=2&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data.keys()) == {"items", "total", "limit", "offset"}
+    assert data["total"] == 3
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert len(data["items"]) == 2
+
+
+def test_list_tickets_page_respects_limit(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """GET /api/tickets/page?limit=1 returns exactly 1 item, total unaffected."""
+    create_ticket(title="A")
+    create_ticket(title="B")
+
+    response = client.get(
+        "/api/tickets/page?limit=1&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["total"] == 2
+
+
+def test_list_tickets_page_respects_offset(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """GET /api/tickets/page with different offsets returns different items."""
+    create_ticket(title="First")
+    create_ticket(title="Second")
+    create_ticket(title="Third")
+
+    response_0 = client.get(
+        "/api/tickets/page?limit=1&offset=0",
+        headers=auth_headers,
+    )
+    response_1 = client.get(
+        "/api/tickets/page?limit=1&offset=1",
+        headers=auth_headers,
+    )
+    assert response_0.status_code == 200
+    assert response_1.status_code == 200
+    assert response_0.json()["items"][0]["id"] != response_1.json()["items"][0]["id"]
+
+
+def test_list_tickets_page_combines_filters_and_pagination(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Filters + pagination combo: total reflects filter, items respect limit."""
+    for i in range(3):
+        create_ticket(
+            title=f"Payment issue {i}",
+            category="payment",
+            priority="urgent",
+        )
+    create_ticket(
+        title="Invoice question",
+        category="invoice",
+        priority="medium",
+    )
+
+    response = client.get(
+        "/api/tickets/page?status=open&category=payment&priority=urgent&limit=2&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 3
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert len(data["items"]) == 2
+    for item in data["items"]:
+        assert item["status"] == "open"
+        assert item["category"] == "payment"
+        assert item["priority"] == "urgent"
+
+
+def test_list_tickets_page_offset_beyond_total_returns_empty_items(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Offset beyond total returns empty items but total remains correct."""
+    create_ticket(title="Only ticket")
+
+    response = client.get(
+        "/api/tickets/page?limit=20&offset=999",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["items"] == []
+    assert data["total"] == 1
+    assert data["limit"] == 20
+    assert data["offset"] == 999
+
+
+def test_list_tickets_page_invalid_limit_returns_422(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """limit=0 returns 422 (ge=1)."""
+    response = client.get(
+        "/api/tickets/page?limit=0&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_list_tickets_page_invalid_limit_too_large_returns_422(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """limit=101 returns 422 (le=100)."""
+    response = client.get(
+        "/api/tickets/page?limit=101&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_list_tickets_page_invalid_offset_returns_422(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """offset=-1 returns 422 (ge=0)."""
+    response = client.get(
+        "/api/tickets/page?limit=20&offset=-1",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_list_tickets_page_invalid_filter_returns_422(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """Invalid filter param returns 422."""
+    response = client.get(
+        "/api/tickets/page?status=invalid_status&limit=20&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_list_tickets_legacy_endpoint_still_returns_list(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Old GET /api/tickets still returns a plain list, not a page object."""
+    create_ticket(title="Legacy test")
+
+    response = client.get("/api/tickets", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert "items" not in (data if isinstance(data, dict) else {})

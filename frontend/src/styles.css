@@ -1385,4 +1385,27 @@ a {
   .ticket-table {
     min-width: 720px;
   }
+
+  .pagination-bar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0 4px;
+  gap: 16px;
+}
+
+.pagination-bar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pagination-info {
+  color: var(--color-muted, #6b7280);
+  font-size: 0.92rem;
 }

@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
-  listTickets,
+  listTicketsPage,
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   type TicketCategory,
-  type TicketListFilters,
+  type TicketListPageParams,
   type TicketPriority,
   type TicketRead,
   type TicketStatus,
@@ -15,6 +15,8 @@ import {
 
 
 type FilterValue<T extends string> = T | "all";
+
+const PAGE_SIZE = 10;
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -32,11 +34,18 @@ function toLabel(value: string) {
 
 export default function TicketsPage() {
   const [tickets, setTickets] = useState<TicketRead[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<FilterValue<TicketStatus>>("all");
   const [priorityFilter, setPriorityFilter] = useState<FilterValue<TicketPriority>>("all");
   const [categoryFilter, setCategoryFilter] = useState<FilterValue<TicketCategory>>("all");
+
+  // 筛选条件变化时，offset 重置为 0
+  useEffect(() => {
+    setOffset(0);
+  }, [statusFilter, priorityFilter, categoryFilter]);
 
   useEffect(() => {
     let active = true;
@@ -46,21 +55,25 @@ export default function TicketsPage() {
       setErrorMessage(null);
 
       try {
-        const filters: TicketListFilters = {};
+        const params: TicketListPageParams = {
+          limit: PAGE_SIZE,
+          offset,
+        };
         if (statusFilter !== "all") {
-          filters.status = statusFilter;
+          params.status = statusFilter;
         }
         if (priorityFilter !== "all") {
-          filters.priority = priorityFilter;
+          params.priority = priorityFilter;
         }
         if (categoryFilter !== "all") {
-          filters.category = categoryFilter;
+          params.category = categoryFilter;
         }
-        const data = await listTickets(filters);
+        const page = await listTicketsPage(params);
         if (!active) {
           return;
         }
-        setTickets(data);
+        setTickets(page.items);
+        setTotal(page.total);
       } catch {
         if (!active) {
           return;
@@ -78,11 +91,18 @@ export default function TicketsPage() {
     return () => {
       active = false;
     };
-  }, [statusFilter, priorityFilter, categoryFilter]);
+  }, [statusFilter, priorityFilter, categoryFilter, offset]);
 
   const openCount = tickets.filter((ticket) =>
     ["open", "ai_processing", "waiting_review", "in_progress"].includes(ticket.status),
   ).length;
+
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const canGoPrevious = offset > 0;
+  const canGoNext = offset + PAGE_SIZE < total;
+  const startItem = total === 0 ? 0 : offset + 1;
+  const endItem = Math.min(offset + tickets.length, total);
 
   return (
     <section className="page-stack">
@@ -102,16 +122,16 @@ export default function TicketsPage() {
 
       <section className="content-grid content-grid--three">
         <article className="panel stat-panel">
-          <span className="stat-panel__value">{tickets.length}</span>
-          <span className="stat-panel__label">Total tickets</span>
+          <span className="stat-panel__value">{total}</span>
+          <span className="stat-panel__label">Matching tickets</span>
         </article>
         <article className="panel stat-panel">
           <span className="stat-panel__value">{openCount}</span>
-          <span className="stat-panel__label">Open workload</span>
+          <span className="stat-panel__label">Open on current page</span>
         </article>
         <article className="panel stat-panel">
           <span className="stat-panel__value">{tickets.length}</span>
-          <span className="stat-panel__label">Current result set</span>
+          <span className="stat-panel__label">Current page items</span>
         </article>
       </section>
 
@@ -180,6 +200,9 @@ export default function TicketsPage() {
           <div>
             <p className="panel-tag">Ticket List</p>
             <h3>Customer and internal requests</h3>
+            <span className="ticket-link__meta">
+              Page {currentPage} / {totalPages}
+            </span>
           </div>
         </div>
 
@@ -190,52 +213,74 @@ export default function TicketsPage() {
         ) : null}
 
         {!loading && !errorMessage && tickets.length > 0 ? (
-          <div className="ticket-table-wrapper">
-            <table className="ticket-table">
-              <thead>
-                <tr>
-                  <th>Ticket</th>
-                  <th>Customer</th>
-                  <th>Category</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tickets.map((ticket) => (
-                  <tr key={ticket.id}>
-                    <td>
-                      <Link to={`/tickets/${ticket.id}`} className="ticket-link">
-                        <strong>{ticket.title}</strong>
-                        <span className="ticket-link__meta">#{ticket.id}</span>
-                      </Link>
-                    </td>
-                    <td>
-                      <div className="ticket-cell-stack">
-                        <span>{ticket.customer_name}</span>
-                        <span className="ticket-link__meta">{ticket.customer_email}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="badge badge--category">{toLabel(ticket.category)}</span>
-                    </td>
-                    <td>
-                      <span className={`badge badge--priority badge--${ticket.priority}`}>
-                        {toLabel(ticket.priority)}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge badge--status badge--${ticket.status}`}>
-                        {toLabel(ticket.status)}
-                      </span>
-                    </td>
-                    <td>{formatDateTime(ticket.updated_at)}</td>
+          <>
+            <div className="ticket-table-wrapper">
+              <table className="ticket-table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Customer</th>
+                    <th>Category</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Updated</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {tickets.map((ticket) => (
+                    <tr key={ticket.id}>
+                      <td>
+                        <Link to={`/tickets/${ticket.id}`} className="ticket-link">
+                          <strong>{ticket.title}</strong>
+                          <span className="ticket-link__meta">#{ticket.id}</span>
+                        </Link>
+                      </td>
+                      <td>
+                        <div className="ticket-cell-stack">
+                          <span>{ticket.customer_name}</span>
+                          <span className="ticket-link__meta">{ticket.customer_email}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="badge badge--category">{toLabel(ticket.category)}</span>
+                      </td>
+                      <td>
+                        <span className={`badge badge--priority badge--${ticket.priority}`}>
+                          {toLabel(ticket.priority)}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge badge--status badge--${ticket.status}`}>
+                          {toLabel(ticket.status)}
+                        </span>
+                      </td>
+                      <td>{formatDateTime(ticket.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="pagination-bar">
+              <button
+                className="primary-button"
+                disabled={!canGoPrevious}
+                onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+              >
+                Previous
+              </button>
+              <span className="pagination-info">
+                Showing {startItem}-{endItem} of {total}
+              </span>
+              <button
+                className="primary-button"
+                disabled={!canGoNext}
+                onClick={() => setOffset((value) => value + PAGE_SIZE)}
+              >
+                Next
+              </button>
+            </div>
+          </>
         ) : null}
       </article>
     </section>

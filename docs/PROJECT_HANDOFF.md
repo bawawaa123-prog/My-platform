@@ -5,7 +5,7 @@
 - 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
 - 当前日期：2026-07-02
 - 当前状态：可运行
-- 最近一次变更：工单列表筛选从"前端本地过滤"升级为"后端接口过滤"（2026-07-02）
+- 最近一次变更：工单列表分页接口 + 前端分页控件（2026-07-02）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -261,6 +261,70 @@ Step 37
 - `python -m pytest -q`：12 passed（全部测试通过）
 - `npm run build`：TypeScript 编译 + Vite 构建通过，0 错误
 - 构建产物：dist/assets/index-D7C5mfYN.js (315.40 kB)
+
+---
+
+### 功能增强 (2026-07-02)：工单列表分页接口 + 前端分页控件
+
+#### 目标
+
+新增后端分页接口 `GET /api/tickets/page`，支持 limit/offset 与过滤条件组合；前端 TicketsPage 接入分页，替换一次性全量拉取。
+
+#### 实际完成内容
+
+- 修复 `ticket_repository.py` 缺少的 `from sqlalchemy import func` 导入（`count_filtered` 需要）
+- 在 `ticket_service.py` 新增 `list_tickets_page` 方法，组合 `list_filtered` + `count_filtered`
+- 在 `ticket_api.py` 新增 `GET /api/tickets/page` 路由，`limit` 默认 20（1-100），`offset` 默认 0（>=0），路由放在 `/{ticket_id}` 之前
+- 保留旧 `GET /api/tickets` 接口不变
+- 在 `test_tickets.py` 新增 10 个分页测试：响应结构、limit/offset 生效、过滤+分页组合、offset 超 total 空页、非法 limit/offset/status 422、旧接口不受影响
+- 在 `frontend/src/api/tickets.ts` 新增 `TicketPage`、`TicketListPageParams` 类型和 `listTicketsPage` API 函数
+- 重写 `frontend/src/pages/TicketsPage.tsx`：使用 `listTicketsPage` 替代全量 `listTickets`，新增 `offset`/`total` 状态，筛选变化时 `offset` 重置为 0，增加 Previous/Next 分页按钮，统计改为 Matching tickets / Open on current page / Current page items
+- 在 `frontend/src/styles.css` 新增 `.pagination-bar` / `.pagination-info` 样式
+
+#### 新增文件
+
+- 无
+
+#### 修改文件
+
+- `backend/app/repositories/ticket_repository.py` — 补充 `func` import
+- `backend/app/services/ticket_service.py` — 新增 `list_tickets_page` 方法
+- `backend/app/api/tickets.py` — 新增 `GET /api/tickets/page` 路由、导入 `TicketPage`
+- `backend/tests/test_tickets.py` — 新增 10 个分页测试
+- `frontend/src/api/tickets.ts` — 新增 `TicketPage`、`TicketListPageParams` 类型和 `listTicketsPage`
+- `frontend/src/pages/TicketsPage.tsx` — 接入分页接口，增加分页控件
+- `frontend/src/styles.css` — 新增 `.pagination-bar` 样式
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无
+
+#### API 变化
+
+- 新增 `GET /api/tickets/page` — 返回 `{ items, total, limit, offset }`，支持 `status`/`priority`/`category`/`limit`/`offset` 可选 Query 参数
+- 旧 `GET /api/tickets` 接口保持 `list[TicketRead]` 不变
+
+#### 前端变化
+
+- TicketsPage 使用 `listTicketsPage` 分页请求，每页 10 条
+- 筛选条件变化时 offset 重置为 0
+- 新增 Previous / Next 分页按钮，首/末页自动禁用
+- 统计面板文案更新为更准确的分页语境
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 无
+
+#### 验证记录
+
+- `python -m pytest tests/test_tickets.py -q`：17 passed（7 原有 + 10 新增）
+- `python -m pytest -q`：22 passed（全部通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
 
 ## 4. 验证记录
 

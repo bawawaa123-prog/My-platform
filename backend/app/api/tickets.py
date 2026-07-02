@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.db.session import get_db
-from app.schemas.ticket import SimilarTicketRead, TicketCreate, TicketRead, TicketUpdate
+from app.schemas.ticket import SimilarTicketRead, TicketCreate, TicketPage, TicketRead, TicketUpdate
 from app.schemas.ticket_message import TicketMessageCreate, TicketMessageRead
 from app.services.ticket_similarity_service import TicketSimilarityService
 from app.services.ticket_service import TicketService
@@ -45,6 +45,31 @@ def list_tickets(
 ) -> list[TicketRead]:
     tickets = TicketService(db).list_tickets(status=status, priority=priority, category=category)
     return [TicketRead.model_validate(ticket) for ticket in tickets]
+
+
+@router.get("/page", response_model=TicketPage)
+def list_tickets_page(
+    status: TicketStatus | None = Query(default=None),
+    priority: TicketPriority | None = Query(default=None),
+    category: TicketCategory | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TicketPage:
+    page = TicketService(db).list_tickets_page(
+        status=status,
+        priority=priority,
+        category=category,
+        limit=limit,
+        offset=offset,
+    )
+    return TicketPage(
+        items=[TicketRead.model_validate(t) for t in page["items"]],
+        total=page["total"],
+        limit=page["limit"],
+        offset=page["offset"],
+    )
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)

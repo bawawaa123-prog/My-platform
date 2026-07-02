@@ -92,6 +92,21 @@ export type TicketListFilters = {
   category?: TicketCategory;
 };
 
+export type TicketPage = {
+  items: TicketRead[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type TicketListPageParams = {
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  category?: TicketCategory;
+  limit?: number;
+  offset?: number;
+};
+
 export async function listTickets(filters?: TicketListFilters) {
   const params: Record<string, string> = {};
   if (filters?.status) {
@@ -104,6 +119,11 @@ export async function listTickets(filters?: TicketListFilters) {
     params.category = filters.category;
   }
   const response = await apiClient.get<TicketRead[]>("/tickets", { params });
+  return response.data;
+}
+
+export async function listTicketsPage(params: TicketListPageParams = {}) {
+  const response = await apiClient.get<TicketPage>("/tickets/page", { params });
   return response.data;
 }
 
