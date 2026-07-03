@@ -67,24 +67,6 @@ class TicketService:
     ) -> list[Ticket]:
         return self.repository.list_filtered(status=status, priority=priority, category=category)
 
-    def list_tickets_page(
-        self,
-        *,
-        status: str | None = None,
-        priority: str | None = None,
-        category: str | None = None,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> dict:
-        items = self.repository.list_filtered(
-            status=status, priority=priority, category=category,
-            limit=limit, offset=offset,
-        )
-        total = self.repository.count_filtered(
-            status=status, priority=priority, category=category,
-        )
-        return {"items": items, "total": total, "limit": limit, "offset": offset}
-
     def list_open_tickets(self, *, limit: int = 20) -> list[Ticket]:
         tickets = self.repository.list_all()
         open_statuses = {"open", "ai_processing", "waiting_review", "in_progress"}
@@ -336,3 +318,25 @@ class TicketService:
         if len(normalized) <= max_length:
             return normalized
         return f"{normalized[: max_length - 3]}..."
+
+    def list_tickets_page(
+        self,
+        *,
+        status: str | None = None,
+        priority: str | None = None,
+        category: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        tickets = self.repository.list_filtered(
+            status=status, priority=priority, category=category, limit=limit, offset=offset
+        )
+        total_count = self.repository.count_filtered(status=status, priority=priority, category=category)
+        return {
+            "items": [self.serialize_ticket(ticket) for ticket in tickets],
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+        }
+
+

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import AppLayout from "../components/AppLayout";
 import ProtectedRoute from "../components/ProtectedRoute";
+import AuditLogsPage from "../pages/AuditLogsPage";
 import DashboardPage from "../pages/DashboardPage";
 import HomePage from "../pages/HomePage";
 import KnowledgeDetailPage from "../pages/KnowledgeDetailPage";
@@ -42,6 +43,10 @@ export const router = createBrowserRouter([
           {
             path: "tickets/:ticketId",
             element: <TicketDetailPage />,
+          },
+          {
+            path: "audit-logs",
+            element: <AuditLogsPage />,
           },
           {
             path: "knowledge",

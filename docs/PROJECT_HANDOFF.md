@@ -3,9 +3,9 @@
 ## 1. 当前进度
 
 - 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
-- 当前日期：2026-07-02
+- 当前日期：2026-07-03
 - 当前状态：可运行
-- 最近一次变更：工单列表分页接口 + 前端分页控件（2026-07-02）
+- 最近一次变更：审计日志查询接口后端 + 测试 + 前端页面（2026-07-03）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -15,7 +15,7 @@
 - 已完成 AI 分类、人工审核接口、历史相似工单推荐、LangGraph 单流程与 interrupt 审核流
 - 已完成 Multi-Agent 第一版、`audit_trail`、`AgentRunLog`、SimilarCaseAgent、WorkflowAgent
 - 已完成 FastMCP tools / resources / prompts 与本地 MCP client 验证
-- 已完成前端登录、基础布局、工单列表/创建/详情、知识库上传/详情/搜索
+- 已完成前端登录、基础布局、工单列表/创建/详情、审计日志查询页面、知识库上传/详情/搜索
 - 已完成前端工单详情页中的 AI 建议审核闭环
 - 已完成前端工单详情页中的 Multi-Agent 运行、Agent 输出展示与 `audit_trail` 时间线展示
 - 已完成 Dashboard 真实 Analytics 看板：核心指标、分类/优先级分布和 AI 采纳率展示
@@ -264,11 +264,82 @@ Step 37
 
 ---
 
-### 功能增强 (2026-07-02)：工单列表分页接口 + 前端分页控件
+### Step 3 (2026-07-03)：审计日志查询接口后端 + 测试 + 前端页面
 
 #### 目标
 
-新增后端分页接口 `GET /api/tickets/page`，支持 limit/offset 与过滤条件组合；前端 TicketsPage 接入分页，替换一次性全量拉取。
+新增 Audit Log 查询接口后端实现（repository / service / API / schema + 11 个 pytest 测试），新增前端审计日志页面（AuditLogsPage.tsx）并接入后端接口。
+
+#### 实际完成内容
+
+**后端：**
+- 修复 `schemas/audit_log.py` 中 `AuditLogRead` 的 `ticket_id` 字段（model 中不存在该字段，改用 `target_type` + `target_id`）
+- 修复 API 中 tuple unpacking bug（service 返回 dict 而非 tuple）
+- 修复 offset Query 参数 `ge=1` → `ge=0`（与分页接口一致）
+- 修复 `AuditLogPage.limit` / `offset` 为 `int | None = None`（当 API 未传参时允许 None）
+- 为 `target_id` / `user_id` Query 参数增加 `ge=1` 校验
+- 新增 `backend/tests/test_audit_logs.py` 11 个测试：
+  - 认证必须（401）
+  - 创建工单后生成 audit_log 记录
+  - action / target_type+target_id / user_id 过滤
+  - limit/offset 分页与 offset 超 total 空页
+  - 非法 limit / offset / target_id / user_id 返回 422
+
+**前端：**
+- 新增 `frontend/src/api/auditLogs.ts` — `AuditLogRead`、`AuditLogPage`、`AuditLogQueryParams` 类型 + `listAuditLogs` API 函数 + `AUDIT_LOG_ACTIONS` / `AUDIT_LOG_TARGET_TYPES` 常量
+- 新增 `frontend/src/pages/AuditLogsPage.tsx`：
+  - 四个筛选控件：action（下拉）、target_type（下拉）、target_id（数字输入）、user_id（数字输入）
+  - 审计日志表格：ID、Action、Target Type、Target ID、User ID、Created At、Detail（可展开 JSON）
+  - 分页（PAGE_SIZE=20、Previous/Next、Showing X-Y of Z）
+  - 筛选变化时 offset 自动重置为 0
+  - Loading / error / empty 状态
+  - Refresh 按钮
+- 注册路由 `/audit-logs` 在 `routes/index.tsx`
+- 导航栏新增 "Audit Logs" 入口在 `AppLayout.tsx`
+
+#### 新增文件
+
+- `frontend/src/api/auditLogs.ts`
+- `frontend/src/pages/AuditLogsPage.tsx`
+- `backend/tests/test_audit_logs.py`
+
+#### 修改文件
+
+- `backend/app/schemas/audit_log.py` — `AuditLogRead` 删除 `ticket_id`、`AuditLogPage.limit`/`offset` 改为 `int | None`
+- `backend/app/api/audit_logs.py` — 修复 tuple unpacking、offset `ge=0`、target_id/user_id 加 `ge=1`
+- `frontend/src/routes/index.tsx` — 新增 `AuditLogsPage` 导入和 `/audit-logs` 路由
+- `frontend/src/components/AppLayout.tsx` — 导航栏新增 "Audit Logs"
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无（AuditLog 模型未修改）
+
+#### API 变化
+
+- 新增 `GET /api/audit-logs` — 支持 `action`/`target_type`/`target_id`/`user_id`/`limit`/`offset` Query 参数，返回 `AuditLogPage`
+
+#### 前端变化
+
+- 新增 `/audit-logs` 页面，含筛选、表格、分页、JSON Detail 展开
+- 导航栏新增 "Audit Logs" 入口
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 无
+
+#### 验证记录
+
+- `python -m pytest tests/test_audit_logs.py -q`：11 passed
+- `python -m pytest -q`：33 passed（全部 33 个后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-DSNw6pgp.js (321.30 kB)
+
+---
 
 #### 实际完成内容
 
