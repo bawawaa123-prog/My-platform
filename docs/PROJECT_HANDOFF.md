@@ -5,7 +5,7 @@
 - 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
 - 当前日期：2026-07-03
 - 当前状态：可运行
-- 最近一次变更：审计日志查询接口后端 + 测试 + 前端页面（2026-07-03）
+- 最近一次变更：Review API 角色限制 + pytest 测试 + 前端联动（2026-07-03）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -338,6 +338,62 @@ Step 37
 - `python -m pytest -q`：33 passed（全部 33 个后端测试通过）
 - `npm run build`：TypeScript + Vite 构建通过，0 错误
 - 构建产物：dist/assets/index-DSNw6pgp.js (321.30 kB)
+
+---
+
+### Step 4 (2026-07-03)：Review API 角色限制 + pytest 测试 + 前端联动
+
+#### 目标
+
+为 Review API 增加角色限制（admin/agent 可审核，viewer 403），补充 11 个 pytest RBAC 测试，前端隐藏 viewer 的审核按钮并处理 403 错误。
+
+#### 后端变更
+
+**检查中发现并修复的 Bug：**
+- `backend/app/api/auth.py` 中 `require_reviewer` 的 role 白名单为 `{"admin", "reviewer"}`，应改为 `{"admin", "agent"}`（系统无 `reviewer` 角色）
+
+**已确认正确的后端实现：**
+- `backend/app/api/reviews.py` 中 approve / edit / reject 三个接口均已使用 `require_reviewer`
+- `require_reviewer` 复用 `get_current_user`，未登录返回 401
+- 403 detail 为 "Reviewer role required"
+- ReviewService 业务逻辑未修改
+
+#### 新增测试
+
+- `backend/tests/test_reviews.py` — 11 个测试：
+  - `test_admin_can_approve_suggestion` — admin approve 返回 200，status=approved
+  - `test_admin_can_reject_suggestion` — admin reject 返回 200，status=rejected，reject_reason 正确
+  - `test_agent_can_approve_suggestion` — agent approve 返回 200
+  - `test_agent_can_edit_suggestion` — agent edit 返回 200，status=edited，final_content 正确
+  - `test_viewer_cannot_review_suggestion` — 参数化覆盖 approve/edit/reject，全部返回 403，detail="Reviewer role required"
+  - `test_unauthenticated_user_cannot_review_suggestion` — 参数化覆盖三个接口，全部返回 401
+  - `test_viewer_rejected_by_rbac_does_not_change_suggestion_status` — 确认 viewer 403 后 suggestion status 仍为 draft，reviewed_by/reviewed_at 为空
+
+#### 前端变更
+
+- `frontend/src/pages/TicketDetailPage.tsx`：
+  - 新增 `useAuth` 导入获取当前用户
+  - 新增 `const canReview = user?.role === "admin" || user?.role === "agent"`
+  - 单 Agent 审核区：`canReview` 时显示完整审核表单 + 按钮；非 `canReview` 时显示"当前角色仅可查看 AI 建议，不能执行审核操作。"
+  - Multi-Agent 审核区：同样逻辑，review complete 结果对所有角色可见
+  - 三个审核 handler（approve/edit/reject）catch 块增加 403 检测，显示"当前角色无审核权限。"
+
+#### 新增文件
+
+- `backend/tests/test_reviews.py`
+
+#### 修改文件
+
+- `backend/app/api/auth.py` — `require_reviewer` role 白名单 `reviewer` → `agent`
+- `frontend/src/pages/TicketDetailPage.tsx` — useAuth + canReview + 条件渲染 + 403 错误处理
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 验证记录
+
+- `python -m pytest tests/test_reviews.py -q`：11 passed
+- `python -m pytest tests/test_reviews.py tests/test_ai.py -q`：13 passed
+- `python -m pytest -q`：44 passed（全部测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
 
 ---
 

@@ -1,3 +1,11 @@
+'''
+Author: Bwaw. 1294245800@qq.com
+Date: 2026-05-30 16:03:31
+LastEditors: Bwaw. 1294245800@qq.com
+LastEditTime: 2026-07-03 15:58:38
+FilePath: \My-platform\backend\app\api\auth.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -55,3 +63,15 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
 @router.get("/me", response_model=UserRead)
 def get_me(current_user: User = Depends(get_current_user)) -> UserRead:
     return UserRead.model_validate(current_user)
+
+
+def require_reviewer(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    # 这个依赖用于需要审核员权限的接口。
+    if current_user.role not in {"admin", "agent"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Reviewer role required",
+        )
+    return current_user

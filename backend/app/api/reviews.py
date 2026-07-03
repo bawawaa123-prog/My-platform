@@ -1,7 +1,15 @@
+'''
+Author: Bwaw. 1294245800@qq.com
+Date: 2026-06-01 16:51:24
+LastEditors: Bwaw. 1294245800@qq.com
+LastEditTime: 2026-07-03 16:00:34
+FilePath: \My-platform\backend\app\api\reviews.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.auth import get_current_user
+from app.api.auth import get_current_user, require_reviewer
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.review import (
@@ -21,7 +29,7 @@ def approve_suggestion(
     suggestion_id: int,
     payload: SuggestionApproveRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_reviewer),
 ) -> SuggestionReviewResponse:
     suggestion = ReviewService(db).approve_suggestion(suggestion_id, payload, current_user)
     return SuggestionReviewResponse.model_validate(suggestion)
@@ -32,7 +40,7 @@ def edit_suggestion(
     suggestion_id: int,
     payload: SuggestionEditRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_reviewer),
 ) -> SuggestionReviewResponse:
     suggestion = ReviewService(db).edit_suggestion(suggestion_id, payload, current_user)
     return SuggestionReviewResponse.model_validate(suggestion)
@@ -43,7 +51,7 @@ def reject_suggestion(
     suggestion_id: int,
     payload: SuggestionRejectRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_reviewer),
 ) -> SuggestionReviewResponse:
     suggestion = ReviewService(db).reject_suggestion(suggestion_id, payload, current_user)
     return SuggestionReviewResponse.model_validate(suggestion)

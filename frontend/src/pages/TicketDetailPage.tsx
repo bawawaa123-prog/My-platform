@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { useAuth } from "../stores/auth";
+
 import {
   approveSuggestion,
   classifyTicketAI,
@@ -247,9 +249,13 @@ function buildAgentHighlights(agentName: string, data: unknown): Array<{ label: 
 }
 
 export default function TicketDetailPage() {
+  const { user } = useAuth();
+
   const params = useParams();
   const ticketId = Number(params.ticketId);
   const isMountedRef = useRef(true);
+
+  const canReview = user?.role === "admin" || user?.role === "agent";
 
   const [ticket, setTicket] = useState<TicketRead | null>(null);
   const [messages, setMessages] = useState<TicketMessageRead[]>([]);
@@ -532,8 +538,13 @@ export default function TicketDetailPage() {
       const reviewed = await approveSuggestion(latestSuggestion.id);
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft approved and locked as the final reviewed reply.");
-    } catch {
-      setAiActionErrorMessage("Approve action failed. Please refresh and try again.");
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 403) {
+        setAiActionErrorMessage("当前角色无审核权限。");
+      } else {
+        setAiActionErrorMessage("Approve action failed. Please refresh and try again.");
+      }
     } finally {
       setIsSubmittingReview(false);
     }
@@ -559,8 +570,13 @@ export default function TicketDetailPage() {
       const reviewed = await editSuggestion(latestSuggestion.id, { final_content: finalContent });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft saved with human edits.");
-    } catch {
-      setAiActionErrorMessage("Edit action failed. Please try again.");
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 403) {
+        setAiActionErrorMessage("当前角色无审核权限。");
+      } else {
+        setAiActionErrorMessage("Edit action failed. Please try again.");
+      }
     } finally {
       setIsSubmittingReview(false);
     }
@@ -586,8 +602,13 @@ export default function TicketDetailPage() {
       const reviewed = await rejectSuggestion(latestSuggestion.id, { reject_reason: rejectReason });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft rejected and the review reason has been recorded.");
-    } catch {
-      setAiActionErrorMessage("Reject action failed. Please try again.");
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 403) {
+        setAiActionErrorMessage("当前角色无审核权限。");
+      } else {
+        setAiActionErrorMessage("Reject action failed. Please try again.");
+      }
     } finally {
       setIsSubmittingReview(false);
     }
@@ -983,7 +1004,7 @@ export default function TicketDetailPage() {
                       </div>
                     </div>
 
-                    {latestSuggestion.status === "draft" ? (
+                    {latestSuggestion.status === "draft" && canReview ? (
                       <div className="review-stack">
                         <label className="field">
                           <span>Editable final reply</span>
@@ -1030,6 +1051,10 @@ export default function TicketDetailPage() {
                             Reject draft
                           </button>
                         </div>
+                      </div>
+                    ) : latestSuggestion.status === "draft" && !canReview ? (
+                      <div className="review-stack">
+                        <p>当前角色仅可查看 AI 建议，不能执行审核操作。</p>
                       </div>
                     ) : (
                       <div className="review-outcome">
@@ -1263,7 +1288,50 @@ export default function TicketDetailPage() {
                   </div>
                 </article>
 
-                {!multiAgentResumeResult ? (
+                {multiAgentResumeResult ? (
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Review Complete</p>
+                        <h3>Multi-agent workflow finalized</h3>
+                      </div>
+                      <span className="badge badge--score">
+                        {multiAgentResumeResult.review_decision
+                          ? toLabel(String(multiAgentResumeResult.review_decision.action ?? "completed"))
+                          : "Completed"}
+                      </span>
+                    </div>
+
+                    {multiAgentResumeResult.reviewed_suggestion ? (
+                      <div className="panel-actions">
+                        <div className="agent-card__summary">
+                          <span>Status</span>
+                          <strong>{multiAgentResumeResult.reviewed_suggestion.status}</strong>
+                          <p>{multiAgentResumeResult.reviewed_suggestion.final_content
+                            ?? multiAgentResumeResult.reviewed_suggestion.suggested_content}</p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {multiAgentReviewSuccess ? (
+                      <p className="form-success" style={{ marginTop: "0.5rem" }}>
+                        {multiAgentReviewSuccess}
+                      </p>
+                    ) : null}
+                  </article>
+                ) : !canReview ? (
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Human Review</p>
+                        <h3>Approve, edit, or reject the multi-agent draft</h3>
+                      </div>
+                    </div>
+                    <div className="panel-actions">
+                      <p>当前角色仅可查看 AI 建议，不能执行审核操作。</p>
+                    </div>
+                  </article>
+                ) : (
                   <article className="panel panel--subtle">
                     <div className="panel-heading">
                       <div>
@@ -1328,37 +1396,6 @@ export default function TicketDetailPage() {
                         </button>
                       </div>
                     </div>
-                  </article>
-                ) : (
-                  <article className="panel panel--subtle">
-                    <div className="panel-heading">
-                      <div>
-                        <p className="panel-tag">Review Complete</p>
-                        <h3>Multi-agent workflow finalized</h3>
-                      </div>
-                      <span className="badge badge--score">
-                        {multiAgentResumeResult.review_decision
-                          ? toLabel(String(multiAgentResumeResult.review_decision.action ?? "completed"))
-                          : "Completed"}
-                      </span>
-                    </div>
-
-                    {multiAgentResumeResult.reviewed_suggestion ? (
-                      <div className="panel-actions">
-                        <div className="agent-card__summary">
-                          <span>Status</span>
-                          <strong>{multiAgentResumeResult.reviewed_suggestion.status}</strong>
-                          <p>{multiAgentResumeResult.reviewed_suggestion.final_content
-                            ?? multiAgentResumeResult.reviewed_suggestion.suggested_content}</p>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {multiAgentReviewSuccess ? (
-                      <p className="form-success" style={{ marginTop: "0.5rem" }}>
-                        {multiAgentReviewSuccess}
-                      </p>
-                    ) : null}
                   </article>
                 )}
               </div>
