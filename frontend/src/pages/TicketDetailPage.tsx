@@ -391,6 +391,20 @@ export default function TicketDetailPage() {
     }
   }
 
+  async function loadMessages() {
+    if (!ticketId) {
+      return;
+    }
+    try {
+      const messageData = await listTicketMessages(ticketId);
+      if (isMountedRef.current) {
+        setMessages(messageData);
+      }
+    } catch {
+      // Silently fail — messages will be stale but the page stays usable.
+    }
+  }
+
   useEffect(() => {
     async function loadTicketDetail() {
       if (!Number.isFinite(ticketId)) {
@@ -538,6 +552,7 @@ export default function TicketDetailPage() {
       const reviewed = await approveSuggestion(latestSuggestion.id);
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft approved and locked as the final reviewed reply.");
+      void loadMessages();
     } catch (error: unknown) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -570,6 +585,7 @@ export default function TicketDetailPage() {
       const reviewed = await editSuggestion(latestSuggestion.id, { final_content: finalContent });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft saved with human edits.");
+      void loadMessages();
     } catch (error: unknown) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -705,7 +721,7 @@ export default function TicketDetailPage() {
       });
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply approved and finalized.");
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
     } catch {
       setMultiAgentReviewError("Approve action failed. Please try again.");
     } finally {
@@ -736,7 +752,7 @@ export default function TicketDetailPage() {
       });
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply saved with human edits.");
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
     } catch {
       setMultiAgentReviewError("Edit action failed. Please try again.");
     } finally {

@@ -494,3 +494,257 @@ def test_viewer_rejected_by_rbac_does_not_change_suggestion_status(
     assert refreshed.status == "draft"
     assert refreshed.reviewed_by is None
     assert refreshed.reviewed_at is None
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — 审核后追加 ticket message 测试
+# ---------------------------------------------------------------------------
+
+
+def list_ticket_messages(
+    client: TestClient,
+    ticket_id: int,
+    headers: dict[str, str],
+) -> list[dict]:
+    response = client.get(
+        f"/api/tickets/{ticket_id}/messages",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def create_draft_reply_suggestion(
+    db: Session,
+    *,
+    ticket_id: int,
+    suggested_content: str = "Suggested reply for review RBAC test.",
+) -> AISuggestion:
+    suggestion = AISuggestion(
+        ticket_id=ticket_id,
+        suggestion_type="reply",
+        suggested_content=suggested_content,
+        reasoning_summary="Created by test.",
+        sources_json=[],
+        confidence=0.8,
+        status="draft",
+    )
+    db.add(suggestion)
+    db.commit()
+    db.refresh(suggestion)
+    return suggestion
+
+
+def test_approve_suggestion_appends_ticket_message(
+    client: TestClient,
+    agent_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Approve without custom content -> message content uses suggested_content."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_draft_reply_suggestion(
+            db, ticket_id=ticket["id"], suggested_content="AI approved response."
+        )
+        suggestion_id = suggestion.id
+
+    before = list_ticket_messages(client, ticket["id"], agent_headers)
+
+    response = client.post(
+        f"/api/reviews/{suggestion_id}/approve",
+        json={},
+        headers=agent_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "approved"
+    assert data["final_content"] == "AI approved response."
+
+    after = list_ticket_messages(client, ticket["id"], agent_headers)
+    assert len(after) == len(before) + 1
+
+    assert any(
+        m["sender_type"] == "agent" and m["content"] == "AI approved response."
+        for m in after
+    )
+
+
+def test_approve_suggestion_with_custom_content_appends_custom_message(
+    client: TestClient,
+    agent_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Approve with custom final_content -> message content uses final_content."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_draft_reply_suggestion(
+            db, ticket_id=ticket["id"], suggested_content="Original AI response."
+        )
+        suggestion_id = suggestion.id
+
+    before = list_ticket_messages(client, ticket["id"], agent_headers)
+
+    response = client.post(
+        f"/api/reviews/{suggestion_id}/approve",
+        json={"final_content": "Custom approved response."},
+        headers=agent_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "approved"
+    assert data["final_content"] == "Custom approved response."
+
+    after = list_ticket_messages(client, ticket["id"], agent_headers)
+    assert len(after) == len(before) + 1
+
+    assert any(
+        m["content"] == "Custom approved response."
+        for m in after
+    )
+    # original suggested_content should NOT appear as a separate message
+    assert not any(
+        m["content"] == "Original AI response."
+        for m in after[len(before):]
+    )
+
+
+def test_edit_suggestion_appends_ticket_message_with_final_content(
+    client: TestClient,
+    agent_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Edit with final_content -> message content uses the edited content."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_draft_reply_suggestion(
+            db, ticket_id=ticket["id"], suggested_content="Original AI response."
+        )
+        suggestion_id = suggestion.id
+
+    before = list_ticket_messages(client, ticket["id"], agent_headers)
+
+    response = client.post(
+        f"/api/reviews/{suggestion_id}/edit",
+        json={"final_content": "Edited human response."},
+        headers=agent_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "edited"
+    assert data["final_content"] == "Edited human response."
+
+    after = list_ticket_messages(client, ticket["id"], agent_headers)
+    assert len(after) == len(before) + 1
+
+    assert any(
+        m["sender_type"] == "agent" and m["content"] == "Edited human response."
+        for m in after
+    )
+
+
+def test_reject_suggestion_does_not_append_ticket_message(
+    client: TestClient,
+    agent_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Reject should NOT create a ticket message."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_draft_reply_suggestion(
+            db, ticket_id=ticket["id"], suggested_content="Rejected AI response."
+        )
+        suggestion_id = suggestion.id
+
+    before = list_ticket_messages(client, ticket["id"], agent_headers)
+
+    response = client.post(
+        f"/api/reviews/{suggestion_id}/reject",
+        json={"reject_reason": "Not suitable for customer."},
+        headers=agent_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "rejected"
+
+    after = list_ticket_messages(client, ticket["id"], agent_headers)
+    assert len(after) == len(before)
+
+    assert not any(
+        m["content"] == "Rejected AI response." for m in after
+    )
+
+
+def test_reviewed_suggestion_cannot_append_duplicate_message(
+    client: TestClient,
+    agent_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Re-reviewing an already-approved suggestion fails and does not duplicate the message."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_draft_reply_suggestion(
+            db,
+            ticket_id=ticket["id"],
+            suggested_content="Only one message should be created.",
+        )
+        suggestion_id = suggestion.id
+
+    # First review succeeds
+    first = client.post(
+        f"/api/reviews/{suggestion_id}/approve",
+        json={},
+        headers=agent_headers,
+    )
+    assert first.status_code == 200
+
+    after_first = list_ticket_messages(client, ticket["id"], agent_headers)
+
+    # Second review of same suggestion should fail
+    second = client.post(
+        f"/api/reviews/{suggestion_id}/approve",
+        json={},
+        headers=agent_headers,
+    )
+    assert second.status_code == 400
+    assert "already been reviewed" in second.json()["detail"]
+
+    after_second = list_ticket_messages(client, ticket["id"], agent_headers)
+    assert len(after_second) == len(after_first)
+
+    # The message content should appear exactly once
+    matching = [
+        m for m in after_second
+        if m["content"] == "Only one message should be created."
+    ]
+    assert len(matching) == 1
+
+
+def test_viewer_cannot_append_ticket_message_by_reviewing(
+    client: TestClient,
+    viewer_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Viewer gets 403 and no ticket message is created."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_draft_reply_suggestion(
+            db, ticket_id=ticket["id"], suggested_content="Viewer should not create message."
+        )
+        suggestion_id = suggestion.id
+
+    before = list_ticket_messages(client, ticket["id"], viewer_headers)
+
+    response = client.post(
+        f"/api/reviews/{suggestion_id}/approve",
+        json={},
+        headers=viewer_headers,
+    )
+    assert response.status_code == 403
+
+    after = list_ticket_messages(client, ticket["id"], viewer_headers)
+    assert len(after) == len(before)
+
+    with next(get_db()) as db:
+        refreshed = db.get(AISuggestion, suggestion_id)
+    assert refreshed is not None
+    assert refreshed.status == "draft"

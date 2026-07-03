@@ -12,6 +12,8 @@ from app.schemas.review import (
     SuggestionRejectRequest,
 )
 from app.services.audit_service import AuditService
+from app.schemas.ticket_message import TicketMessageCreate
+from app.services.ticket_service import TicketService
 
 
 class ReviewService:
@@ -36,12 +38,18 @@ class ReviewService:
         suggestion.reject_reason = None
 
         updated = self.repository.save(suggestion)
+        message_id = self._append_review_message(
+            suggestion=suggestion,
+            current_user=current_user,
+            content=final_content,
+        )
         self.audit_service.log_action(
             user=current_user,
             action="approve_ai_suggestion",
             target_type="ai_suggestion",
             target_id=updated.id,
             detail_json={
+                "message_id": message_id,
                 "ticket_id": updated.ticket_id,
                 "suggestion_type": updated.suggestion_type,
                 "status": updated.status,
@@ -65,6 +73,11 @@ class ReviewService:
         suggestion.reject_reason = None
 
         updated = self.repository.save(suggestion)
+        message_id = self._append_review_message(
+            suggestion=suggestion,
+            current_user=current_user,
+            content=payload.final_content,
+        )
         self.audit_service.log_action(
             user=current_user,
             action="edit_ai_suggestion",
@@ -186,6 +199,23 @@ class ReviewService:
                 }
             )
         return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    def _append_review_message(
+    self,
+    *,
+    suggestion: AISuggestion,
+    current_user: User,
+    content: str,
+) -> int:
+        message = TicketService(self.db).add_ticket_message(
+            suggestion.ticket_id,
+            TicketMessageCreate(
+                sender_type="agent",
+                content=content,
+            ),
+            current_user,
+        )
+        return message.id
 
 
 

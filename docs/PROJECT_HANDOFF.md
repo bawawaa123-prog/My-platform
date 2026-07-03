@@ -2,10 +2,10 @@
 
 ## 1. 当前进度
 
-- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列
+- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列、审核后自动追加 ticket message
 - 当前日期：2026-07-03
 - 当前状态：可运行
-- 最近一次变更：Step 5 — 新增待审核 AI Suggestion 队列接口 + pytest 测试 + 前端 PendingReviewsPage（2026-07-03）
+- 最近一次变更：Step 6 — 审核 AI Suggestion 后追加 ticket message 测试 + 前端消息刷新（2026-07-03）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -546,6 +546,83 @@ Step 37
 - `python -m pytest -q`：57 passed（全部 57 个后端测试通过）
 - `npm run build`：TypeScript + Vite 构建通过，0 错误
 - 构建产物：dist/assets/index-mBI5VIaG.js (326.25 kB), dist/assets/index-DXM2iwGS.css (18.78 kB)
+
+---
+
+### Step 6 (2026-07-03)：审核 AI Suggestion 后追加 ticket message（测试 + 前端消息刷新）
+
+#### 目标
+
+当 admin/agent 执行 approve 或 edit 审核操作时，后端自动追加一条 ticket message 记录审核动作和最终回复内容。补充 6 个 pytest 测试验证消息追加逻辑，并修改前端 TicketDetailPage 在审核完成后自动刷新消息列表。
+
+#### 后端确认
+
+- `backend/app/services/review_service.py` 已正确实现 `_append_review_message` 方法：
+  - 复用 `TicketService.add_ticket_message`，sender_type="agent"，内容为审核说明（approve: "AI draft approved. Final reply: {final_content}"; edit: "AI draft edited. Final reply: {final_content}"）
+  - `approve_suggestion` 和 `edit_suggestion` 调用 `_append_review_message`
+  - `reject_suggestion` 不追加 ticket message
+- 确认无循环依赖问题
+
+#### 新增测试
+
+- `backend/tests/test_reviews.py` — 新增 6 个测试（共 30 个）：
+  - `test_approve_suggestion_appends_ticket_message` — approve 后 ticket 有一条消息
+  - `test_approve_suggestion_with_custom_content_appends_custom_message` — approve 时传 final_content 可在消息内容中体现
+  - `test_edit_suggestion_appends_ticket_message_with_final_content` — edit 后 ticket 有一条消息含编辑后内容
+  - `test_reject_suggestion_does_not_append_ticket_message` — reject 后 ticket 无新增消息
+  - `test_reviewed_suggestion_cannot_append_duplicate_message` — 已审核的 suggestion 再次 approve 不追加重复消息
+  - `test_viewer_cannot_append_ticket_message_by_reviewing` — viewer 403 不修改 suggestion 状态也不追加消息
+- 新增辅助函数：`list_ticket_messages`、`create_draft_reply_suggestion`
+- DetachedInstanceError 处理：`suggestion_id` 在内 `with db:` 块捕获
+
+#### 前端变更
+
+- `frontend/src/pages/TicketDetailPage.tsx`：
+  - 新增 `loadMessages()` 辅助函数，通过 `listTicketMessages(ticketId)` 刷新消息列表
+  - `handleApproveSuggestion` — approve 成功后调用 `void loadMessages()`
+  - `handleEditSuggestion` — edit 成功后调用 `void loadMessages()`
+  - `handleMultiAgentApprove` — 在 `Promise.all` 中加入 `loadMessages()`
+  - `handleMultiAgentEdit` — 在 `Promise.all` 中加入 `loadMessages()`
+  - `handleRejectSuggestion` / `handleMultiAgentReject` — 不追加消息，无需刷新
+
+#### 新增文件
+
+- 无
+
+#### 修改文件
+
+- `backend/tests/test_reviews.py` — 新增 6 个 Step 6 测试
+- `frontend/src/pages/TicketDetailPage.tsx` — 新增 `loadMessages()`、审核 handler 增加消息刷新
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无（复用工单消息表）
+
+#### API 变化
+
+- 无（复用已有 review 接口，后端逻辑已在 Step 6 之前实现）
+
+#### 前端变化
+
+- 单 Agent 审核：approve/edit 后消息列表自动刷新
+- Multi-Agent 审核：approve/edit 后消息列表自动刷新
+- reject 不追加消息，因此不需要刷新
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 无
+
+#### 验证记录
+
+- `python -m pytest tests/test_reviews.py -q`：30 passed（24 原有 + 6 新增）
+- `python -m pytest -q`：63 passed（全部后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-BmyZl1eX.js (329.32 kB), dist/assets/index-CzLdNN7M.css (21.33 kB)
 
 ---
 
