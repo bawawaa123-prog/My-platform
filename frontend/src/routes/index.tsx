@@ -8,6 +8,7 @@ import HomePage from "../pages/HomePage";
 import KnowledgeDetailPage from "../pages/KnowledgeDetailPage";
 import KnowledgePage from "../pages/KnowledgePage";
 import LoginPage from "../pages/LoginPage";
+import PendingReviewsPage from "../pages/PendingReviewsPage";
 import TicketCreatePage from "../pages/TicketCreatePage";
 import TicketDetailPage from "../pages/TicketDetailPage";
 import TicketsPage from "../pages/TicketsPage";
@@ -47,6 +48,10 @@ export const router = createBrowserRouter([
           {
             path: "audit-logs",
             element: <AuditLogsPage />,
+          },
+          {
+            path: "pending-reviews",
+            element: <PendingReviewsPage />,
           },
           {
             path: "knowledge",

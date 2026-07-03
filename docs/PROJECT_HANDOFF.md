@@ -2,10 +2,10 @@
 
 ## 1. 当前进度
 
-- 当前完成到：Step 37 - README、架构图、演示脚本、简历包装（全部 37 Steps 已完成）
+- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列
 - 当前日期：2026-07-03
 - 当前状态：可运行
-- 最近一次变更：Review API 角色限制 + pytest 测试 + 前端联动（2026-07-03）
+- 最近一次变更：Step 5 — 新增待审核 AI Suggestion 队列接口 + pytest 测试 + 前端 PendingReviewsPage（2026-07-03）
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -453,6 +453,102 @@ Step 37
 - `python -m pytest -q`：22 passed（全部通过）
 - `npm run build`：TypeScript + Vite 构建通过，0 错误
 
+---
+
+### Step 5 (2026-07-03)：新增待审核 AI Suggestion 队列接口（后端修复 + 测试 + 前端 PendingReviewsPage）
+
+#### 目标
+
+新增 `GET /api/reviews/pending-suggestions` 接口，返回人工审核待处理的 AI reply suggestion 列表（status=draft, suggestion_type=reply），并补充测试和前端待审核页面。
+
+#### 后端变更
+
+**检查后端实现时发现并修复的 Bug：**
+- `backend/app/api/reviews.py`：
+  - 缺少 `Query`、`PendingSuggestionRead`、`PendingSuggestionPage` 导入 — 补充
+  - `offset` Query 参数 `ge=1` → `ge=0`（offset=0 是合法值）
+  - `limit` Query 参数 default `None` → `20`，增加 `le=100` 校验
+  - `ticket_id` Query 参数增加 `gt=0` 校验（ticket_id=0 返回 422）
+- `backend/app/repositories/suggestion_repository.py`：
+  - `list_pending_reply_suggestions` 使用 `.scalars()` 但 SELECT 包含两列 → 改为 `.execute().all()` + tuple unpacking
+  - `count_pending_reply_suggestions` 返回 `list(result.all())` → 改用 `func.count()` + `.scalar()`
+  - 缺少 `func`、`Ticket` 导入 — 补充
+
+#### 新增测试
+
+- `backend/tests/test_reviews.py` — 新增 10 个测试（共 24 个）：
+  1. `test_list_pending_suggestions_requires_auth` — 未登录返回 401
+  2. `test_list_pending_suggestions_returns_draft_reply_suggestions` — draft reply 出现在队列中，字段完整
+  3. `test_list_pending_suggestions_excludes_reviewed_suggestions` — approved/edited/rejected 不出现
+  4. `test_list_pending_suggestions_excludes_non_reply_suggestions` — classification 类型不出现
+  5. `test_list_pending_suggestions_filters_by_ticket_id` — ticket_id 过滤有效
+  6. `test_list_pending_suggestions_paginates_results` — limit/offset/total 分页正确
+  7. `test_list_pending_suggestions_respects_offset` — 不同 offset 返回不同数据
+  8. `test_list_pending_suggestions_offset_beyond_total_returns_empty_items` — offset=999 返回 []
+  9. `test_list_pending_suggestions_invalid_query_returns_422` — limit=0/101、offset=-1、ticket_id=0 均返回 422
+  10. `test_viewer_can_list_pending_suggestions_but_cannot_review` — viewer 可查看队列但不能 approve（403）
+
+#### 前端变更
+
+- **新增** `frontend/src/api/reviews.ts`：
+  - `PendingSuggestionRead`、`PendingSuggestionPage`、`PendingSuggestionParams` 类型
+  - `listPendingSuggestions(params)` 调用 `GET /reviews/pending-suggestions`
+- **新增** `frontend/src/pages/PendingReviewsPage.tsx`：
+  - 页面标题 "Pending Reviews / 待审核 AI 回复"
+  - 表格展示：ID、Ticket（跳转链接）、Priority、Category、Status、Customer、Suggested Reply（可展开）、Confidence、Created At、Action（View ticket 按钮）
+  - 分页：Previous/Next 按钮，显示 Showing X-Y of Z
+  - Loading / error / empty 状态，空列表显示"暂无待审核 AI 回复"
+  - 无 approve/edit/reject 按钮
+  - `SuggestionPreview` 子组件：超过 120 字符可展开/收起
+- **修改** `frontend/src/routes/index.tsx`：注册 `/pending-reviews` 路由
+- **修改** `frontend/src/components/AppLayout.tsx`：导航栏新增 "Pending Reviews" 入口（Dashboard / Tickets / Pending Reviews / Audit Logs / Knowledge）
+
+#### 新增文件
+
+- `frontend/src/api/reviews.ts`
+- `frontend/src/pages/PendingReviewsPage.tsx`
+
+#### 修改文件
+
+- `backend/app/api/reviews.py` — 修复 Query 参数默认值和校验
+- `backend/app/repositories/suggestion_repository.py` — 修复 scalars→execute、count 返回类型
+- `backend/tests/test_reviews.py` — 新增 10 个 pending-suggestions 测试
+- `frontend/src/routes/index.tsx` — 注册 `/pending-reviews` 路由
+- `frontend/src/components/AppLayout.tsx` — 导航栏新增 "Pending Reviews"
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无
+
+#### API 变化
+
+- 新增 `GET /api/reviews/pending-suggestions` — 支持 `ticket_id`(gt=0)/`limit`(ge=1,le=100,default=20)/`offset`(ge=0,default=0)，返回 `PendingSuggestionPage`
+- 查看队列使用 `get_current_user`（登录即可），审核操作使用 `require_reviewer`（admin/agent 仅限）
+
+#### 前端变化
+
+- 新增 `/pending-reviews` 页面，含待审核队列表格、可展开建议内容、分页
+- 导航栏新增 "Pending Reviews" 入口
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 无
+
+#### 验证记录
+
+- `python -m pytest tests/test_reviews.py -q`：24 passed（11 原有 + 10 新增 + 3 参数化变体）
+- `python -m pytest tests/test_reviews.py tests/test_ai.py -q`：26 passed
+- `python -m pytest -q`：57 passed（全部 57 个后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-mBI5VIaG.js (326.25 kB), dist/assets/index-DXM2iwGS.css (18.78 kB)
+
+---
+
 ## 4. 验证记录
 
 ### 执行过的命令
@@ -488,7 +584,7 @@ Get-Content -Path docs\BACKEND_APP_FUNCTION_GUIDE.md -Encoding utf8
   - Multi-Agent 工作流
   - MCP server / MCP client 回归
   - Analytics 统计接口
-  - 人工审核 approve / edit / reject 细分路径
+- 已覆盖的测试包括：health、login、工单 CRUD（含分页和筛选）、知识库上传搜索、AI mock 分类和 RAG 回复草稿链路、Review API RBAC、Pending Suggestions 队列查询（24 个 review 测试 + 57 个总测试）
 - 当前未加入前端 lint、组件测试或浏览器端 e2e 测试
 - 当前知识检索仍基于 fake embedding + 本地 JSON 向量索引，适合演示，但语义命中质量仍偏基础
 - 当前 Multi-Agent 使用 `InMemorySaver`，仅适合同一后端进程内演示；服务重启后暂停态不会保留

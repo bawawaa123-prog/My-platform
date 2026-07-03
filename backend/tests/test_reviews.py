@@ -193,6 +193,282 @@ def test_unauthenticated_user_cannot_review_suggestion(
     assert response.status_code == 401
 
 
+def create_suggestion(
+    db: Session,
+    *,
+    ticket_id: int,
+    suggestion_type: str = "reply",
+    status: str = "draft",
+) -> AISuggestion:
+    """Flexible helper to create an AISuggestion with configurable type and status."""
+    suggestion = AISuggestion(
+        ticket_id=ticket_id,
+        suggestion_type=suggestion_type,
+        suggested_content="Suggested reply for pending queue test.",
+        reasoning_summary="Created by test.",
+        sources_json=[],
+        confidence=0.8,
+        status=status,
+    )
+    db.add(suggestion)
+    db.commit()
+    db.refresh(suggestion)
+    return suggestion
+
+
+# ---------------------------------------------------------------------------
+# pending-suggestions queue tests (Step 5)
+# ---------------------------------------------------------------------------
+
+
+def test_list_pending_suggestions_requires_auth(
+    client: TestClient,
+) -> None:
+    """Unauthenticated request returns 401."""
+    response = client.get("/api/reviews/pending-suggestions")
+    assert response.status_code == 401
+
+
+def test_list_pending_suggestions_returns_draft_reply_suggestions(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Draft reply suggestion appears in the pending queue."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_suggestion(db, ticket_id=ticket["id"])
+
+    response = client.get(
+        "/api/reviews/pending-suggestions",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert "total" in data
+    assert "limit" in data
+    assert "offset" in data
+
+    assert any(
+        item["id"] == suggestion.id
+        and item["ticket_id"] == ticket["id"]
+        and item["ticket_title"] == ticket["title"]
+        and item["suggestion_type"] == "reply"
+        and item["status"] == "draft"
+        and item["suggested_content"] is not None
+        and item["confidence"] is not None
+        for item in data["items"]
+    )
+
+
+def test_list_pending_suggestions_excludes_reviewed_suggestions(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Approved / edited / rejected suggestions should not appear in pending queue."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        s_draft = create_suggestion(db, ticket_id=ticket["id"], status="draft")
+        s_approved = create_suggestion(db, ticket_id=ticket["id"], status="approved")
+        s_edited = create_suggestion(db, ticket_id=ticket["id"], status="edited")
+        s_rejected = create_suggestion(db, ticket_id=ticket["id"], status="rejected")
+        reviewed_ids = {s_approved.id, s_edited.id, s_rejected.id}
+        draft_id = s_draft.id
+
+    response = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket['id']}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {item["id"] for item in data["items"]}
+
+    assert draft_id in returned_ids
+    assert reviewed_ids.isdisjoint(returned_ids)
+    assert all(item["status"] == "draft" for item in data["items"])
+
+
+def test_list_pending_suggestions_excludes_non_reply_suggestions(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Only suggestion_type='reply' should appear in pending queue."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        s_classification = create_suggestion(
+            db, ticket_id=ticket["id"], suggestion_type="classification", status="draft"
+        )
+        s_reply = create_suggestion(
+            db, ticket_id=ticket["id"], suggestion_type="reply", status="draft"
+        )
+        reply_id = s_reply.id
+        classification_id = s_classification.id
+
+    response = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket['id']}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {item["id"] for item in data["items"]}
+
+    assert reply_id in returned_ids
+    assert classification_id not in returned_ids
+    assert all(item["suggestion_type"] == "reply" for item in data["items"])
+
+
+def test_list_pending_suggestions_filters_by_ticket_id(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """ticket_id filter should only return suggestions for that ticket."""
+    ticket_a = create_ticket()
+    ticket_b = create_ticket()
+    with next(get_db()) as db:
+        s_a = create_suggestion(db, ticket_id=ticket_a["id"])
+        s_b = create_suggestion(db, ticket_id=ticket_b["id"])
+        s_a_id = s_a.id
+        s_b_id = s_b.id
+
+    response = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket_a['id']}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {item["id"] for item in data["items"]}
+
+    assert s_a_id in returned_ids
+    assert s_b_id not in returned_ids
+    assert all(item["ticket_id"] == ticket_a["id"] for item in data["items"])
+
+
+def test_list_pending_suggestions_paginates_results(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """limit / offset pagination works and total reflects unfiltered count."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        for _ in range(3):
+            create_suggestion(db, ticket_id=ticket["id"])
+
+    response = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket['id']}&limit=2&offset=0",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 3
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert len(data["items"]) == 2
+
+
+def test_list_pending_suggestions_respects_offset(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Different offsets return different items."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        for _ in range(3):
+            create_suggestion(db, ticket_id=ticket["id"])
+
+    page1 = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket['id']}&limit=1&offset=0",
+        headers=auth_headers,
+    )
+    page2 = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket['id']}&limit=1&offset=1",
+        headers=auth_headers,
+    )
+    assert page1.status_code == 200
+    assert page2.status_code == 200
+    items1 = page1.json()["items"]
+    items2 = page2.json()["items"]
+    if items1 and items2:
+        assert items1[0]["id"] != items2[0]["id"]
+
+
+def test_list_pending_suggestions_offset_beyond_total_returns_empty_items(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Offset beyond total returns empty items list."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        create_suggestion(db, ticket_id=ticket["id"])
+
+    response = client.get(
+        f"/api/reviews/pending-suggestions?ticket_id={ticket['id']}&limit=20&offset=999",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["items"] == []
+    assert data["total"] == 1
+    assert data["limit"] == 20
+    assert data["offset"] == 999
+
+
+@pytest.mark.parametrize(
+    "query_string",
+    [
+        pytest.param("limit=0", id="limit=0"),
+        pytest.param("limit=101", id="limit=101"),
+        pytest.param("offset=-1", id="offset=-1"),
+        pytest.param("ticket_id=0", id="ticket_id=0"),
+    ],
+)
+def test_list_pending_suggestions_invalid_query_returns_422(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    query_string: str,
+) -> None:
+    """Invalid query parameters return 422."""
+    response = client.get(
+        f"/api/reviews/pending-suggestions?{query_string}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_viewer_can_list_pending_suggestions_but_cannot_review(
+    client: TestClient,
+    viewer_headers: dict[str, str],
+    create_ticket: Callable[..., dict],
+) -> None:
+    """Viewer can view pending queue but gets 403 on review actions."""
+    ticket = create_ticket()
+    with next(get_db()) as db:
+        suggestion = create_suggestion(db, ticket_id=ticket["id"])
+
+    # Viewer can list pending suggestions
+    list_resp = client.get(
+        "/api/reviews/pending-suggestions",
+        headers=viewer_headers,
+    )
+    assert list_resp.status_code == 200
+    data = list_resp.json()
+    assert any(item["id"] == suggestion.id for item in data["items"])
+
+    # Viewer cannot approve
+    approve_resp = client.post(
+        f"/api/reviews/{suggestion.id}/approve",
+        json={},
+        headers=viewer_headers,
+    )
+    assert approve_resp.status_code == 403
+
+
 def test_viewer_rejected_by_rbac_does_not_change_suggestion_status(
     client: TestClient,
     viewer_headers: dict[str, str],

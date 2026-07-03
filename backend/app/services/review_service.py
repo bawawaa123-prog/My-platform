@@ -152,3 +152,50 @@ class ReviewService:
                 detail="AI suggestion has already been reviewed",
             )
         return suggestion
+
+    def list_pending_suggestions(
+        self,
+        *,
+        ticket_id: int | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict:
+        rows= self.repository.list_pending_reply_suggestions(
+            ticket_id=ticket_id, limit=limit, offset=offset
+        )
+        total = self.repository.count_pending_reply_suggestions(ticket_id=ticket_id)
+        items=[]
+        for suggestion, ticket in rows:
+            items.append(
+                {
+                    "id": suggestion.id,
+                    "ticket_id": suggestion.ticket_id,
+                    "ticket_title": ticket.title,
+                    "ticket_status": ticket.status,
+                    "ticket_priority": ticket.priority,
+                    "ticket_category": ticket.category,
+                    "customer_email": ticket.customer_email,
+                    "suggestion_type": suggestion.suggestion_type,
+                    "suggested_content": suggestion.suggested_content,
+                    "reasoning_summary": suggestion.reasoning_summary,
+                    "sources_json": suggestion.sources_json,
+                    "confidence": suggestion.confidence,
+                    "status": suggestion.status,
+                    "created_at": suggestion.created_at,
+                    "updated_at": suggestion.updated_at,
+                }
+            )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -25,12 +25,102 @@ function toLabel(value: string) {
     .join(" ");
 }
 
+// ---------------------------------------------------------------------------
+// Helper: humanize key names
+// ---------------------------------------------------------------------------
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// ---------------------------------------------------------------------------
+// Helper: format a single value for display
+// ---------------------------------------------------------------------------
+
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "\u2014";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+  return String(value);
+}
+
+// ---------------------------------------------------------------------------
+// Helper: build a one-line summary for the detail column
+// ---------------------------------------------------------------------------
+
+function buildAuditSummary(log: AuditLogRead): string {
+  const detail = log.detail_json ?? {};
+
+  switch (log.action) {
+    case "create_ticket":
+      return typeof detail.title === "string"
+        ? `Created ticket "${detail.title}"`
+        : "Created ticket";
+
+    case "update_ticket":
+      if (typeof detail.status === "string") {
+        return `Updated status to "${detail.status}"`;
+      }
+      if (typeof detail.priority === "string") {
+        return `Updated priority to "${detail.priority}"`;
+      }
+      return "Updated ticket";
+
+    case "delete_ticket":
+      return typeof detail.title === "string"
+        ? `Deleted ticket "${detail.title}"`
+        : "Deleted ticket";
+
+    case "create_message":
+      return typeof detail.sender_type === "string"
+        ? `Created ${detail.sender_type} message`
+        : "Created message";
+
+    case "create_knowledge_doc":
+    case "update_knowledge_doc":
+      return typeof detail.title === "string"
+        ? `${humanizeKey(log.action)} "${detail.title}"`
+        : humanizeKey(log.action);
+
+    case "delete_knowledge_doc":
+      return "Deleted knowledge document";
+
+    case "upload_document":
+      return typeof detail.filename === "string"
+        ? `Uploaded "${detail.filename}"`
+        : "Uploaded document";
+
+    case "review_ai_suggestion":
+    case "approve_reply":
+      return "Approved AI suggestion";
+
+    case "reject_reply":
+      return "Rejected AI suggestion";
+
+    default:
+      return "View structured details";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main page component
+// ---------------------------------------------------------------------------
+
 export default function AuditLogsPage() {
   const [logs, setLogs] = useState<AuditLogRead[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<AuditLogRead | null>(null);
 
   // Filter state
   const [actionFilter, setActionFilter] = useState("all");
@@ -235,7 +325,10 @@ export default function AuditLogsPage() {
                       <td>{log.user_id ?? "—"}</td>
                       <td>{formatDateTime(log.created_at)}</td>
                       <td>
-                        <DetailPopover detail={log.detail_json} />
+                        <DetailCell
+                          log={log}
+                          onViewDetails={() => setSelectedLog(log)}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -265,32 +358,154 @@ export default function AuditLogsPage() {
           </>
         ) : null}
       </article>
+
+      {selectedLog ? (
+        <AuditLogDetailModal
+          log={selectedLog}
+          onClose={() => setSelectedLog(null)}
+        />
+      ) : null}
     </section>
   );
 }
 
-function DetailPopover({ detail }: { detail: Record<string, unknown> }) {
-  const [open, setOpen] = useState(false);
-  const entries = Object.entries(detail);
+// ---------------------------------------------------------------------------
+// DetailCell — summary + button in table
+// ---------------------------------------------------------------------------
 
-  if (entries.length === 0) {
-    return <span className="ticket-link__meta">—</span>;
+function DetailCell({
+  log,
+  onViewDetails,
+}: {
+  log: AuditLogRead;
+  onViewDetails: () => void;
+}) {
+  const detail = log.detail_json;
+  const hasDetail = detail && typeof detail === "object" && Object.keys(detail).length > 0;
+  const summary = hasDetail ? buildAuditSummary(log) : null;
+
+  if (!hasDetail) {
+    return <span className="ticket-link__meta detail-summary--empty">No details</span>;
   }
 
   return (
-    <span className="detail-popover-wrapper">
+    <div>
+      <div className="detail-summary">{summary}</div>
       <button
         type="button"
-        className="ghost-button"
-        onClick={() => setOpen((current) => !current)}
+        className="view-details-button"
+        onClick={onViewDetails}
       >
-        {open ? "Hide" : "View"}
+        View details
       </button>
-      {open ? (
-        <pre className="detail-json">
-          {JSON.stringify(detail, null, 2)}
-        </pre>
-      ) : null}
-    </span>
+    </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// AuditLogDetailModal — modal with structured key-value + raw JSON
+// ---------------------------------------------------------------------------
+
+function AuditLogDetailModal({
+  log,
+  onClose,
+}: {
+  log: AuditLogRead;
+  onClose: () => void;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  const detail = log.detail_json ?? {};
+
+  const handleOverlayClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
+
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const entries = Object.entries(detail);
+
+  return (
+    <div className="modal-overlay" onClick={handleOverlayClick}>
+      <div className="modal-panel" role="dialog" aria-modal="true">
+        <div className="modal-header">
+          <div>
+            <p className="modal-header__title">Audit Log #{log.id}</p>
+            <p className="modal-header__meta">
+              Action: {log.action} &middot; Target: {log.target_type} #{log.target_id}
+              &nbsp;&middot; Created: {formatDateTime(log.created_at)}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="modal-close-button"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {entries.length > 0 ? (
+            <div className="detail-grid">
+              {entries.map(([key, value]) => (
+                <div key={key} style={{ display: "contents" }}>
+                  <div className="detail-grid__key">{humanizeKey(key)}</div>
+                  <div className="detail-grid__value">
+                    {renderDetailValue(value)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: "#8b9aab", fontStyle: "italic" }}>
+              No structured details available.
+            </p>
+          )}
+
+          <div className="raw-json-section">
+            <button
+              type="button"
+              className="raw-json-toggle"
+              onClick={() => setShowRaw((current) => !current)}
+            >
+              {showRaw ? "Hide raw JSON" : "Show raw JSON"}
+            </button>
+            {showRaw ? (
+              <div className="raw-json-content">
+                {JSON.stringify(detail, null, 2)}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function renderDetailValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return <span className="detail-grid__value--null">&mdash;</span>;
+  }
+
+  if (typeof value === "boolean") {
+    return <span>{value ? "Yes" : "No"}</span>;
+  }
+
+  if (typeof value === "object") {
+    return <pre>{JSON.stringify(value, null, 2)}</pre>;
+  }
+
+  return <span>{String(value)}</span>;
 }

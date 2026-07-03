@@ -1,7 +1,16 @@
-from sqlalchemy import select
+'''
+Author: Bwaw. 1294245800@qq.com
+Date: 2026-06-01 16:02:25
+LastEditors: Bwaw. 1294245800@qq.com
+LastEditTime: 2026-07-03 17:10:47
+FilePath: \My-platform\backend\app\repositories\suggestion_repository.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.ai_suggestion import AISuggestion
+from app.models.ticket import Ticket
 
 
 class SuggestionRepository:
@@ -53,3 +62,41 @@ class SuggestionRepository:
             .order_by(AISuggestion.reviewed_at.desc(), AISuggestion.id.desc())
         )
         return self.db.scalar(statement)
+
+    def _apply_pending_filters(
+        self,
+        statement,
+        *,
+        ticket_id: int | None = None,
+    ):
+        statement = statement.where(AISuggestion.suggestion_type == "reply", AISuggestion.status == "draft")
+        if ticket_id is not None:
+            statement = statement.where(AISuggestion.ticket_id == ticket_id)
+        return statement
+
+    def list_pending_reply_suggestions(
+        self,
+        *,
+        ticket_id: int | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[tuple[AISuggestion, Ticket]]:
+        statement = select(AISuggestion, Ticket).join(Ticket, AISuggestion.ticket_id == Ticket.id)
+        statement = self._apply_pending_filters(statement, ticket_id=ticket_id)
+        statement = statement.order_by(AISuggestion.created_at.desc(), AISuggestion.id.desc())
+        if limit is not None:
+            statement = statement.limit(limit)  
+        if offset is not None:
+            statement = statement.offset(offset)
+        rows = self.db.execute(statement).all()
+        return [(row[0], row[1]) for row in rows]
+
+    def count_pending_reply_suggestions(
+        self,
+        *,
+        ticket_id: int | None = None,
+    ) -> int:
+        statement = select(func.count(AISuggestion.id))
+        statement = self._apply_pending_filters(statement, ticket_id=ticket_id)
+        result = self.db.execute(statement).scalar()
+        return result or 0
