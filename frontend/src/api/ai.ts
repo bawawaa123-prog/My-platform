@@ -196,7 +196,7 @@ export async function listTicketSuggestions(ticketId: number) {
   return response.data;
 }
 
-export async function approveSuggestion(suggestionId: number, payload?: SuggestionApprovePayload) {
+export async function approveSuggestion(suggestionId: number, payload: SuggestionApprovePayload = {}) {
   const response = await apiClient.post<AIReplyDraftRead>(`/reviews/${suggestionId}/approve`, payload);
   return response.data;
 }

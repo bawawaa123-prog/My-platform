@@ -248,6 +248,26 @@ function buildAgentHighlights(agentName: string, data: unknown): Array<{ label: 
   return [];
 }
 
+function getApiErrorDetail(error: unknown, fallback: string): string {
+  try {
+    const data = (error as { response?: { data?: unknown } })?.response?.data;
+    if (!data) {
+      return fallback;
+    }
+    const detail = (data as { detail?: unknown })?.detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (Array.isArray(detail)) {
+      return detail.map((item: { msg?: string }) => item.msg ?? "").join("; ");
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+
 export default function TicketDetailPage() {
   const { user } = useAuth();
 
@@ -508,8 +528,8 @@ export default function TicketDetailPage() {
             }
           : current,
       );
-    } catch {
-      setAiActionErrorMessage("AI classification failed. Please retry in a moment.");
+    } catch (error: unknown) {
+      setAiActionErrorMessage(getApiErrorDetail(error, "AI classification failed. Please retry in a moment."));
     } finally {
       setIsClassifying(false);
     }
@@ -531,8 +551,8 @@ export default function TicketDetailPage() {
       setSuggestions((current) => upsertSuggestion(current, suggestion));
       setReviewDraftContent(suggestion.suggested_content);
       setReviewRejectReason("");
-    } catch {
-      setAiActionErrorMessage("Reply draft generation failed. Please try again.");
+    } catch (error: unknown) {
+      setAiActionErrorMessage(getApiErrorDetail(error, "Reply draft generation failed. Please try again."));
     } finally {
       setIsGeneratingReply(false);
     }
@@ -558,7 +578,7 @@ export default function TicketDetailPage() {
       if (status === 403) {
         setAiActionErrorMessage("当前角色无审核权限。");
       } else {
-        setAiActionErrorMessage("Approve action failed. Please refresh and try again.");
+        setAiActionErrorMessage(getApiErrorDetail(error, "Approve action failed. Please refresh and try again."));
       }
     } finally {
       setIsSubmittingReview(false);
@@ -591,7 +611,7 @@ export default function TicketDetailPage() {
       if (status === 403) {
         setAiActionErrorMessage("当前角色无审核权限。");
       } else {
-        setAiActionErrorMessage("Edit action failed. Please try again.");
+        setAiActionErrorMessage(getApiErrorDetail(error, "Edit action failed. Please try again."));
       }
     } finally {
       setIsSubmittingReview(false);
@@ -623,7 +643,7 @@ export default function TicketDetailPage() {
       if (status === 403) {
         setAiActionErrorMessage("当前角色无审核权限。");
       } else {
-        setAiActionErrorMessage("Reject action failed. Please try again.");
+        setAiActionErrorMessage(getApiErrorDetail(error, "Reject action failed. Please try again."));
       }
     } finally {
       setIsSubmittingReview(false);
@@ -698,8 +718,8 @@ export default function TicketDetailPage() {
       );
 
       await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
-    } catch {
-      setAgentRunsErrorMessage("Multi-agent analysis failed. Please try again.");
+    } catch (error: unknown) {
+      setAgentRunsErrorMessage(getApiErrorDetail(error, "Multi-agent analysis failed. Please try again."));
     } finally {
       setIsRunningMultiAgent(false);
     }
@@ -722,8 +742,8 @@ export default function TicketDetailPage() {
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply approved and finalized.");
       await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
-    } catch {
-      setMultiAgentReviewError("Approve action failed. Please try again.");
+    } catch (error: unknown) {
+      setMultiAgentReviewError(getApiErrorDetail(error, "Approve action failed. Please try again."));
     } finally {
       setIsSubmittingMultiAgentReview(false);
     }
@@ -753,8 +773,8 @@ export default function TicketDetailPage() {
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply saved with human edits.");
       await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
-    } catch {
-      setMultiAgentReviewError("Edit action failed. Please try again.");
+    } catch (error: unknown) {
+      setMultiAgentReviewError(getApiErrorDetail(error, "Edit action failed. Please try again."));
     } finally {
       setIsSubmittingMultiAgentReview(false);
     }
@@ -784,8 +804,8 @@ export default function TicketDetailPage() {
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply rejected.");
       await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
-    } catch {
-      setMultiAgentReviewError("Reject action failed. Please try again.");
+    } catch (error: unknown) {
+      setMultiAgentReviewError(getApiErrorDetail(error, "Reject action failed. Please try again."));
     } finally {
       setIsSubmittingMultiAgentReview(false);
     }
