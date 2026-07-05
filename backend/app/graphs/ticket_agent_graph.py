@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.graphs.ticket_agent_state import TicketAgentState
 from app.schemas.ai import AIReplyDraftRead, AIWorkflowPendingReviewRead, AIWorkflowProcessRead
 from app.schemas.ticket import TicketRead
+from app.services.agent_run_service import AgentRunService
 from app.services.rag_service import RagService
 from app.services.review_service import ReviewService
 from app.services.risk_service import RiskCheckResult, RiskService
@@ -24,6 +25,7 @@ class TicketAgentGraph:
     def __init__(self, db: Session):
         self.db = db
         self.ticket_service = TicketService(db)
+        self.agent_run_service = AgentRunService(db)
         self.rag_service = RagService(db)
         self.review_service = ReviewService(db)
         self.ticket_similarity_service = TicketSimilarityService(db)
@@ -34,25 +36,77 @@ class TicketAgentGraph:
     def invoke(self, ticket_id: int) -> TicketAgentState:
         return self.graph.invoke({"ticket_id": ticket_id})
 
-    def start(self, ticket_id: int, *, thread_id: str | None = None) -> AIWorkflowPendingReviewRead:
+    def start(
+        self,
+        ticket_id: int,
+        *,
+        thread_id: str | None = None,
+        created_by_user_id: int | None = None,
+    ) -> AIWorkflowPendingReviewRead:
         # 带 interrupt 的流程会在 human_review 节点停住，
         # 然后把当前审核所需的全部上下文打包返回给前端。
+        # 同时持久化 AgentRunLog 记录本次执行。
         workflow_id = thread_id or str(uuid4())
         config = self._build_config(workflow_id)
-        result = self.interrupt_graph.invoke(
-            {
-                "ticket_id": ticket_id,
-                "run_id": workflow_id,
-                "thread_id": workflow_id,
-            },
-            config,
-        )
-        if "__interrupt__" not in result:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Workflow did not pause at the human review step.",
+        input_json = {
+            "ticket_id": ticket_id,
+            "run_id": workflow_id,
+            "thread_id": workflow_id,
+        }
+        try:
+            result = self.interrupt_graph.invoke(
+                {
+                    "ticket_id": ticket_id,
+                    "run_id": workflow_id,
+                    "thread_id": workflow_id,
+                },
+                config,
             )
-        return self.get_pending_review(workflow_id)
+            if "__interrupt__" not in result:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Workflow did not pause at the human review step.",
+                )
+            pending_review = self.get_pending_review(workflow_id)
+            self.agent_run_service.upsert_run_log(
+                ticket_id=ticket_id,
+                run_id=workflow_id,
+                run_type="workflow",
+                status="interrupted",
+                input_json=input_json,
+                output_json=pending_review.model_dump(mode="json"),
+                audit_trail_json=[],
+                created_by=created_by_user_id,
+            )
+            return pending_review
+        except HTTPException:
+            self.db.rollback()
+            self.agent_run_service.upsert_run_log(
+                ticket_id=ticket_id,
+                run_id=workflow_id,
+                run_type="workflow",
+                status="failed",
+                input_json=input_json,
+                output_json={},
+                audit_trail_json=[],
+                created_by=created_by_user_id,
+                error_message="Workflow did not pause at the human review step.",
+            )
+            raise
+        except Exception as exc:
+            self.db.rollback()
+            self.agent_run_service.upsert_run_log(
+                ticket_id=ticket_id,
+                run_id=workflow_id,
+                run_type="workflow",
+                status="failed",
+                input_json=input_json,
+                output_json={},
+                audit_trail_json=[],
+                created_by=created_by_user_id,
+                error_message=str(exc),
+            )
+            raise
 
     def resume(
         self,
@@ -91,6 +145,18 @@ class TicketAgentGraph:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Workflow resume did not produce a final output.",
             )
+
+        # 持久化 resume 结果到 AgentRunLog
+        self.agent_run_service.upsert_run_log(
+            ticket_id=ticket_id,
+            run_id=workflow_id,
+            run_type="workflow",
+            status="completed",
+            input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
+            output_json=final_output,
+            audit_trail_json=[],
+        )
+
         return AIWorkflowProcessRead.model_validate(final_output)
 
     def get_pending_review(self, workflow_id: str) -> AIWorkflowPendingReviewRead:
@@ -297,11 +363,11 @@ class TicketAgentGraph:
             "classification": self._serialize_classification(state["classification"]),
             "knowledge_hits": self._serialize_knowledge_hits(state.get("knowledge_hits")),
             "similar_tickets": self._serialize_similar_tickets(state.get("similar_tickets")),
-            "reply_suggestion": self._ensure_reply_draft(state["reply_suggestion"]).model_dump(),
-            "risk_check": self._ensure_risk_result(state["risk_check"]).model_dump(),
+            "reply_suggestion": self._ensure_reply_draft(state["reply_suggestion"]).model_dump(mode="json"),
+            "risk_check": self._ensure_risk_result(state["risk_check"]).model_dump(mode="json"),
             "review_decision": state.get("review_decision"),
             "reviewed_suggestion": (
-                self._ensure_reply_draft(reviewed_suggestion).model_dump()
+                self._ensure_reply_draft(reviewed_suggestion).model_dump(mode="json")
                 if reviewed_suggestion
                 else None
             ),
@@ -323,8 +389,8 @@ class TicketAgentGraph:
     @staticmethod
     def _serialize_ticket(value: TicketRead | dict) -> dict:
         if isinstance(value, TicketRead):
-            return value.model_dump()
-        return TicketRead.model_validate(value).model_dump()
+            return value.model_dump(mode="json")
+        return TicketRead.model_validate(value).model_dump(mode="json")
 
     @staticmethod
     def _serialize_classification(value: dict | object) -> dict:

@@ -456,3 +456,275 @@ def test_multi_agent_resume_duplicate_returns_error_without_duplicate_message(
     # No extra message should have been created
     messages_after_second = list_ticket_messages(client, ticket["id"], auth_headers)
     assert len(messages_after_second) == len(messages_after_first)
+
+
+# ============================================================================
+# Test 9: old /agent-runs endpoint supports run_type filter
+# ============================================================================
+
+
+def test_list_agent_runs_filters_by_run_type(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify that GET /api/ai/tickets/{id}/agent-runs?run_type=multi_agent
+    returns only runs with that run_type."""
+    ticket = create_ticket(
+        title="Agent run type filter",
+        content="Test run_type filter.",
+    )
+
+    pending = start_multi_agent(client, ticket["id"], auth_headers)
+
+    response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs?run_type=multi_agent",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    runs = response.json()
+
+    assert isinstance(runs, list)
+    assert len(runs) >= 1
+    assert all(run["run_type"] == "multi_agent" for run in runs)
+    assert any(run["run_id"] == pending["run_id"] for run in runs)
+
+
+# ============================================================================
+# Test 10: old /agent-runs endpoint supports status filter
+# ============================================================================
+
+
+def test_list_agent_runs_filters_by_status(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify that GET /api/ai/tickets/{id}/agent-runs?status=interrupted
+    returns only runs with that status."""
+    ticket = create_ticket(
+        title="Agent run status filter",
+        content="Test status filter.",
+    )
+
+    interrupted = start_multi_agent(client, ticket["id"], auth_headers)
+
+    completed = start_multi_agent(client, ticket["id"], auth_headers)
+    resume_multi_agent(
+        client,
+        ticket["id"],
+        auth_headers,
+        {"action": "approve", "run_id": completed["run_id"]},
+    )
+
+    response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs?status=interrupted",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    runs = response.json()
+
+    assert isinstance(runs, list)
+    assert all(run["status"] == "interrupted" for run in runs)
+    assert any(run["run_id"] == interrupted["run_id"] for run in runs)
+    assert not any(run["run_id"] == completed["run_id"] for run in runs)
+
+
+# ============================================================================
+# Test 11: new /agent-runs/page returns items/total/limit/offset structure
+# ============================================================================
+
+
+def test_list_agent_runs_page_returns_items_total_limit_offset(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify the paginated endpoint returns the expected envelope:
+    items, total, limit, offset."""
+    ticket = create_ticket(
+        title="Agent run page",
+        content="Test paginated agent run logs.",
+    )
+
+    start_multi_agent(client, ticket["id"], auth_headers)
+    start_multi_agent(client, ticket["id"], auth_headers)
+    start_multi_agent(client, ticket["id"], auth_headers)
+
+    response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs/page?limit=2&offset=0",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "items" in data
+    assert "total" in data
+    assert "limit" in data
+    assert "offset" in data
+    assert data["total"] >= 3
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert len(data["items"]) == 2
+
+
+# ============================================================================
+# Test 12: new /agent-runs/page combines run_type + status + pagination
+# ============================================================================
+
+
+def test_list_agent_runs_page_combines_run_type_status_and_pagination(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify run_type, status, and pagination can be combined."""
+    ticket = create_ticket(
+        title="Agent run combined filters",
+        content="Test combined filters.",
+    )
+
+    completed_a = start_multi_agent(client, ticket["id"], auth_headers)
+    resume_multi_agent(
+        client,
+        ticket["id"],
+        auth_headers,
+        {"action": "approve", "run_id": completed_a["run_id"]},
+    )
+
+    completed_b = start_multi_agent(client, ticket["id"], auth_headers)
+    resume_multi_agent(
+        client,
+        ticket["id"],
+        auth_headers,
+        {
+            "action": "reject",
+            "run_id": completed_b["run_id"],
+            "reject_reason": "Not useful.",
+        },
+    )
+
+    interrupted = start_multi_agent(client, ticket["id"], auth_headers)
+
+    response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs/page"
+        "?run_type=multi_agent&status=completed&limit=1&offset=0",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["total"] >= 2
+    assert data["limit"] == 1
+    assert data["offset"] == 0
+    assert len(data["items"]) == 1
+    assert all(item["run_type"] == "multi_agent" for item in data["items"])
+    assert all(item["status"] == "completed" for item in data["items"])
+
+    ids = {item["run_id"] for item in data["items"]}
+    assert interrupted["run_id"] not in ids
+
+
+# ============================================================================
+# Test 13: offset is respected
+# ============================================================================
+
+
+def test_list_agent_runs_page_respects_offset(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify that different offsets return different pages."""
+    ticket = create_ticket(
+        title="Agent run offset",
+        content="Test offset for agent run page.",
+    )
+
+    start_multi_agent(client, ticket["id"], auth_headers)
+    start_multi_agent(client, ticket["id"], auth_headers)
+    start_multi_agent(client, ticket["id"], auth_headers)
+
+    first_response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs/page?limit=1&offset=0",
+        headers=auth_headers,
+    )
+    second_response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs/page?limit=1&offset=1",
+        headers=auth_headers,
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+
+    first_items = first_response.json()["items"]
+    second_items = second_response.json()["items"]
+
+    if first_items and second_items:
+        assert first_items[0]["run_id"] != second_items[0]["run_id"]
+
+
+# ============================================================================
+# Test 14: offset beyond total returns empty items but still has total
+# ============================================================================
+
+
+def test_list_agent_runs_page_offset_beyond_total_returns_empty_items(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify that offset past total returns items=[], but total is unchanged."""
+    ticket = create_ticket(
+        title="Agent run offset beyond total",
+        content="Test offset beyond total.",
+    )
+
+    start_multi_agent(client, ticket["id"], auth_headers)
+
+    response = client.get(
+        f"/api/ai/tickets/{ticket['id']}/agent-runs/page?limit=20&offset=999",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["items"] == []
+    assert data["total"] >= 1
+    assert data["limit"] == 20
+    assert data["offset"] == 999
+
+
+# ============================================================================
+# Test 15: invalid pagination parameters return 422
+# ============================================================================
+
+
+def test_list_agent_runs_page_invalid_pagination_returns_422(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_ticket,
+) -> None:
+    """Verify that limit=0, limit=101, offset=-1 all return 422."""
+    ticket = create_ticket(
+        title="Invalid agent run pagination",
+        content="Test invalid pagination.",
+    )
+
+    invalid_queries = [
+        "limit=0&offset=0",
+        "limit=101&offset=0",
+        "limit=20&offset=-1",
+    ]
+
+    for query in invalid_queries:
+        response = client.get(
+            f"/api/ai/tickets/{ticket['id']}/agent-runs/page?{query}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 422

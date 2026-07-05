@@ -9,15 +9,21 @@ import {
   editSuggestion,
   generateTicketReply,
   listTicketAgentRuns,
+  listTicketAgentRunsPage,
   listTicketSuggestions,
   rejectSuggestion,
   resumeMultiAgentProcess,
+  resumeSingleAgentProcess,
   startMultiAgentProcess,
+  startSingleAgentProcess,
   type AgentAuditTrailItem,
+  type AgentRunLogPageParams,
   type AgentRunLogRead,
   type AIMultiAgentPendingReviewRead,
   type AIMultiAgentProcessRead,
   type AIReplyDraftRead,
+  type AIWorkflowPendingReviewRead,
+  type AIWorkflowProcessRead,
   type MultiAgentKnowledgeResult,
   type MultiAgentReplyResult,
   type MultiAgentRiskResult,
@@ -297,6 +303,15 @@ export default function TicketDetailPage() {
   const [multiAgentReviewDraftContent, setMultiAgentReviewDraftContent] = useState("");
   const [multiAgentReviewRejectReason, setMultiAgentReviewRejectReason] = useState("");
 
+  const [singleAgentResult, setSingleAgentResult] = useState<AIWorkflowPendingReviewRead | null>(null);
+  const [singleAgentResumeResult, setSingleAgentResumeResult] = useState<AIWorkflowProcessRead | null>(null);
+  const [isStartingSingleAgent, setIsStartingSingleAgent] = useState(false);
+  const [isSubmittingSingleAgentReview, setIsSubmittingSingleAgentReview] = useState(false);
+  const [singleAgentReviewDraftContent, setSingleAgentReviewDraftContent] = useState("");
+  const [singleAgentReviewRejectReason, setSingleAgentReviewRejectReason] = useState("");
+  const [singleAgentReviewError, setSingleAgentReviewError] = useState<string | null>(null);
+  const [singleAgentReviewSuccess, setSingleAgentReviewSuccess] = useState<string | null>(null);
+
   const [reviewDraftContent, setReviewDraftContent] = useState("");
   const [reviewRejectReason, setReviewRejectReason] = useState("");
 
@@ -305,6 +320,17 @@ export default function TicketDetailPage() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [sendMessageError, setSendMessageError] = useState<string | null>(null);
   const [sendMessageSuccess, setSendMessageSuccess] = useState<string | null>(null);
+
+  const AGENT_RUN_PAGE_SIZE = 5;
+
+  const [agentRunHistory, setAgentRunHistory] = useState<AgentRunLogRead[]>([]);
+  const [agentRunTotal, setAgentRunTotal] = useState(0);
+  const [agentRunOffset, setAgentRunOffset] = useState(0);
+  const [agentRunTypeFilter, setAgentRunTypeFilter] = useState("all");
+  const [agentRunStatusFilter, setAgentRunStatusFilter] = useState("all");
+  const [agentRunHistoryLoading, setAgentRunHistoryLoading] = useState(false);
+  const [agentRunHistoryError, setAgentRunHistoryError] = useState<string | null>(null);
+  const [expandedAgentRunId, setExpandedAgentRunId] = useState<string | null>(null);
 
   const singleAgentSuggestions = useMemo(
     () => suggestions.filter((s) => (s.source_workflow ?? "single_agent") === "single_agent"),
@@ -325,6 +351,13 @@ export default function TicketDetailPage() {
     }
     return null;
   }, [multiAgentResumeResult, latestAgentRun]);
+
+  const singleAgentFinalReviewedSuggestion = useMemo(() => {
+    if (singleAgentResumeResult?.reviewed_suggestion) {
+      return singleAgentResumeResult.reviewed_suggestion;
+    }
+    return null;
+  }, [singleAgentResumeResult]);
 
   const agentCards = useMemo(
     () => {
@@ -406,28 +439,41 @@ export default function TicketDetailPage() {
       const latestRun = runData[0] ?? null;
       setLatestAgentRun(latestRun);
 
-      if (latestRun && isMultiAgentPendingReviewRead(latestRun.output_json)) {
-        setMultiAgentResult(latestRun.output_json);
-        setMultiAgentResumeResult(null);
-      } else if (
-        latestRun &&
-        latestRun.run_type === "multi_agent" &&
-        latestRun.status === "completed"
-      ) {
-        const output = latestRun.output_json;
-        if (output && typeof output === "object" && "reviewed_suggestion" in output) {
-          setMultiAgentResumeResult(output as unknown as AIMultiAgentProcessRead);
+      // Reset all workflow states first
+      setMultiAgentResult(null);
+      setMultiAgentResumeResult(null);
+      setSingleAgentResult(null);
+      setSingleAgentResumeResult(null);
+
+      if (latestRun) {
+        if (latestRun.run_type === "multi_agent") {
+          if (latestRun.status === "interrupted" && isMultiAgentPendingReviewRead(latestRun.output_json)) {
+            setMultiAgentResult(latestRun.output_json);
+          } else if (latestRun.status === "completed") {
+            const output = latestRun.output_json;
+            if (output && typeof output === "object" && "reviewed_suggestion" in output) {
+              setMultiAgentResumeResult(output as unknown as AIMultiAgentProcessRead);
+            }
+          }
+        } else if (latestRun.run_type === "workflow") {
+          if (latestRun.status === "interrupted") {
+            const output = latestRun.output_json;
+            if (output && typeof output === "object" && "run_id" in output) {
+              setSingleAgentResult(output as unknown as AIWorkflowPendingReviewRead);
+            }
+          } else if (latestRun.status === "completed") {
+            const output = latestRun.output_json;
+            if (output && typeof output === "object" && "reviewed_suggestion" in output) {
+              setSingleAgentResumeResult(output as unknown as AIWorkflowProcessRead);
+            }
+          }
         }
-        setMultiAgentResult(null);
-      } else if (!latestRun) {
-        setMultiAgentResult(null);
-        setMultiAgentResumeResult(null);
       }
     } catch {
       if (!isMountedRef.current) {
         return;
       }
-      setAgentRunsErrorMessage("Unable to load the multi-agent run history right now.");
+      setAgentRunsErrorMessage("Unable to load the agent run history right now.");
     } finally {
       if (isMountedRef.current) {
         setLoadingAgentRuns(false);
@@ -449,6 +495,36 @@ export default function TicketDetailPage() {
     }
   }
 
+  async function loadAgentRunHistory(currentTicketId: number) {
+    setAgentRunHistoryLoading(true);
+    setAgentRunHistoryError(null);
+
+    try {
+      const page = await listTicketAgentRunsPage(currentTicketId, {
+        run_type: agentRunTypeFilter === "all" ? undefined : agentRunTypeFilter,
+        status: agentRunStatusFilter === "all" ? undefined : agentRunStatusFilter,
+        limit: AGENT_RUN_PAGE_SIZE,
+        offset: agentRunOffset,
+      });
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setAgentRunHistory(page.items);
+      setAgentRunTotal(page.total);
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      setAgentRunHistoryError("Unable to load agent run history.");
+    } finally {
+      if (isMountedRef.current) {
+        setAgentRunHistoryLoading(false);
+      }
+    }
+  }
+
   useEffect(() => {
     async function loadTicketDetail() {
       if (!Number.isFinite(ticketId)) {
@@ -466,6 +542,9 @@ export default function TicketDetailPage() {
       setMultiAgentSuccessMessage(null);
       setClassification(null);
       setMultiAgentResult(null);
+      setMultiAgentResumeResult(null);
+      setSingleAgentResult(null);
+      setSingleAgentResumeResult(null);
       setLatestAgentRun(null);
 
       try {
@@ -508,6 +587,22 @@ export default function TicketDetailPage() {
     setReviewDraftContent(latestSingleAgentSuggestion.final_content ?? latestSingleAgentSuggestion.suggested_content);
     setReviewRejectReason(latestSingleAgentSuggestion.reject_reason ?? "");
   }, [latestSingleAgentSuggestion?.id, latestSingleAgentSuggestion?.updated_at]);
+
+  useEffect(() => {
+    setAgentRunOffset(0);
+  }, [agentRunTypeFilter, agentRunStatusFilter]);
+
+  useEffect(() => {
+    if (!ticketId) {
+      return;
+    }
+    void loadAgentRunHistory(Number(ticketId));
+  }, [ticketId, agentRunOffset, agentRunTypeFilter, agentRunStatusFilter]);
+
+  const agentRunCurrentPage = Math.floor(agentRunOffset / AGENT_RUN_PAGE_SIZE) + 1;
+  const agentRunTotalPages = Math.max(1, Math.ceil(agentRunTotal / AGENT_RUN_PAGE_SIZE));
+  const canGoPreviousAgentRun = agentRunOffset > 0;
+  const canGoNextAgentRun = agentRunOffset + AGENT_RUN_PAGE_SIZE < agentRunTotal;
 
   async function handleStatusChange(nextStatus: TicketStatus) {
     if (!ticket) {
@@ -559,29 +654,131 @@ export default function TicketDetailPage() {
     }
   }
 
-  async function handleGenerateReply() {
+  async function handleStartSingleAgentWorkflow() {
     if (!ticket) {
       return;
     }
 
-    setIsGeneratingReply(true);
+    setIsStartingSingleAgent(true);
     setAiActionErrorMessage(null);
     setSuggestionsErrorMessage(null);
     setReviewSuccessMessage(null);
     setMultiAgentSuccessMessage(null);
+    setSingleAgentReviewError(null);
+    setSingleAgentReviewSuccess(null);
+    setSingleAgentResumeResult(null);
 
     try {
-      const suggestion = await generateTicketReply(ticket.id);
-      setSuggestions((current) => upsertSuggestion(current, suggestion));
-      setReviewDraftContent(suggestion.suggested_content);
-      setReviewRejectReason("");
+      const result = await startSingleAgentProcess(ticket.id);
+      setSingleAgentResult(result);
+      setClassification(result.classification);
+      setTicket(result.ticket);
+      setSingleAgentReviewDraftContent(result.draft_reply.suggested_content);
+      setSingleAgentReviewRejectReason("");
+      setSingleAgentReviewSuccess("Single-agent workflow paused at human review. Review the draft below.");
+
+      await loadAgentRuns(ticket.id);
     } catch (error: unknown) {
-      setAiActionErrorMessage(getApiErrorDetail(error, "Reply draft generation failed. Please try again."));
+      setAiActionErrorMessage(getApiErrorDetail(error, "Single-agent workflow start failed. Please try again."));
     } finally {
-      setIsGeneratingReply(false);
+      setIsStartingSingleAgent(false);
     }
   }
 
+  async function handleSingleAgentApprove() {
+    if (!ticket || !singleAgentResult) {
+      return;
+    }
+
+    const finalContent = singleAgentReviewDraftContent.trim();
+    if (!finalContent) {
+      setSingleAgentReviewError("Edited final reply cannot be empty.");
+      return;
+    }
+
+    setIsSubmittingSingleAgentReview(true);
+    setSingleAgentReviewError(null);
+    setSingleAgentReviewSuccess(null);
+
+    try {
+      const result = await resumeSingleAgentProcess(ticket.id, {
+        action: "approve",
+        run_id: singleAgentResult.run_id,
+        final_content: finalContent,
+      });
+      setSingleAgentResumeResult(result);
+      setSingleAgentReviewSuccess("Single-agent draft approved and finalized.");
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+    } catch (error: unknown) {
+      setSingleAgentReviewError(getApiErrorDetail(error, "Approve action failed. Please try again."));
+    } finally {
+      setIsSubmittingSingleAgentReview(false);
+    }
+  }
+
+  async function handleSingleAgentEdit() {
+    if (!ticket || !singleAgentResult) {
+      return;
+    }
+
+    const finalContent = singleAgentReviewDraftContent.trim();
+    if (!finalContent) {
+      setSingleAgentReviewError("Edited final reply cannot be empty.");
+      return;
+    }
+
+    setIsSubmittingSingleAgentReview(true);
+    setSingleAgentReviewError(null);
+    setSingleAgentReviewSuccess(null);
+
+    try {
+      const result = await resumeSingleAgentProcess(ticket.id, {
+        action: "edit",
+        run_id: singleAgentResult.run_id,
+        final_content: finalContent,
+      });
+      setSingleAgentResumeResult(result);
+      setSingleAgentReviewSuccess("Single-agent draft saved with human edits.");
+      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+    } catch (error: unknown) {
+      setSingleAgentReviewError(getApiErrorDetail(error, "Edit action failed. Please try again."));
+    } finally {
+      setIsSubmittingSingleAgentReview(false);
+    }
+  }
+
+  async function handleSingleAgentReject() {
+    if (!ticket || !singleAgentResult) {
+      return;
+    }
+
+    const rejectReason = singleAgentReviewRejectReason.trim();
+    if (!rejectReason) {
+      setSingleAgentReviewError("Please enter a reject reason before rejecting.");
+      return;
+    }
+
+    setIsSubmittingSingleAgentReview(true);
+    setSingleAgentReviewError(null);
+    setSingleAgentReviewSuccess(null);
+
+    try {
+      const result = await resumeSingleAgentProcess(ticket.id, {
+        action: "reject",
+        run_id: singleAgentResult.run_id,
+        reject_reason: rejectReason,
+      });
+      setSingleAgentResumeResult(result);
+      setSingleAgentReviewSuccess("Single-agent draft rejected.");
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+    } catch (error: unknown) {
+      setSingleAgentReviewError(getApiErrorDetail(error, "Reject action failed. Please try again."));
+    } finally {
+      setIsSubmittingSingleAgentReview(false);
+    }
+  }
+
+  /* Backward-compat handlers for reviewing existing AISuggestion records via the review API */
   async function handleApproveSuggestion() {
     if (!latestSingleAgentSuggestion) {
       return;
@@ -968,10 +1165,11 @@ export default function TicketDetailPage() {
               </div>
             </div>
 
-            {!latestSingleAgentSuggestion && !multiAgentFinalReviewedSuggestion ? (
+            {!latestSingleAgentSuggestion && !singleAgentFinalReviewedSuggestion && !multiAgentFinalReviewedSuggestion ? (
               <p className="panel-state">No final human-reviewed reply yet.</p>
             ) : (
               <div className="ai-panel-stack">
+                {/* Single-Agent reviewed via old AISuggestion path (backward compat) */}
                 {latestSingleAgentSuggestion &&
                 latestSingleAgentSuggestion.status !== "draft" ? (
                   <article className="suggestion-card">
@@ -1009,6 +1207,54 @@ export default function TicketDetailPage() {
                       <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
                         <span>Reject reason</span>
                         <p>{latestSingleAgentSuggestion.reject_reason}</p>
+                      </div>
+                    ) : null}
+                  </article>
+                ) : null}
+
+                {/* Single-Agent reviewed via new process/resume path */}
+                {singleAgentFinalReviewedSuggestion ? (
+                  <article className="suggestion-card">
+                    <div className="suggestion-card__header">
+                      <div>
+                        <strong>Source: Single-Agent Workflow</strong>
+                        <span>
+                          Reviewed at{" "}
+                          {formatDateTime(singleAgentFinalReviewedSuggestion.reviewed_at)}
+                        </span>
+                      </div>
+                      <span
+                        className={`badge badge--suggestion-status badge--${singleAgentFinalReviewedSuggestion.status}`}
+                      >
+                        {toLabel(singleAgentFinalReviewedSuggestion.status)}
+                      </span>
+                    </div>
+                    <div className="detail-stack detail-stack--compact">
+                      <div className="detail-row">
+                        <span>Reviewer</span>
+                        <strong>
+                          {singleAgentFinalReviewedSuggestion.reviewed_by
+                            ? `User #${singleAgentFinalReviewedSuggestion.reviewed_by}`
+                            : "Not available"}
+                        </strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Run ID</span>
+                        <strong className="meta-card__value--mono">
+                          {latestAgentRun?.run_id ?? "N/A"}
+                        </strong>
+                      </div>
+                    </div>
+                    {singleAgentFinalReviewedSuggestion.final_content ? (
+                      <div className="review-outcome__block">
+                        <span>Final approved content</span>
+                        <p>{singleAgentFinalReviewedSuggestion.final_content}</p>
+                      </div>
+                    ) : null}
+                    {singleAgentFinalReviewedSuggestion.reject_reason ? (
+                      <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
+                        <span>Reject reason</span>
+                        <p>{singleAgentFinalReviewedSuggestion.reject_reason}</p>
                       </div>
                     ) : null}
                   </article>
@@ -1074,26 +1320,242 @@ export default function TicketDetailPage() {
                 <button
                   type="button"
                   className="primary-button"
-                  onClick={handleGenerateReply}
-                  disabled={isGeneratingReply}
+                  onClick={handleStartSingleAgentWorkflow}
+                  disabled={isStartingSingleAgent}
                 >
-                  {isGeneratingReply ? "Generating..." : "Generate single-agent draft"}
+                  {isStartingSingleAgent ? "Starting..." : "Generate single-agent draft"}
                 </button>
               </div>
 
               {aiActionErrorMessage ? <p className="form-error">{aiActionErrorMessage}</p> : null}
-              {reviewSuccessMessage ? <p className="form-success">{reviewSuccessMessage}</p> : null}
               {loadingSuggestions ? <p className="panel-state">Loading AI suggestions...</p> : null}
               {suggestionsErrorMessage ? <p className="form-error">{suggestionsErrorMessage}</p> : null}
 
-              {!loadingSuggestions && !suggestionsErrorMessage && !latestSingleAgentSuggestion ? (
+              {/* Empty state — no workflow result and no existing suggestion */}
+              {!loadingSuggestions && !suggestionsErrorMessage && !singleAgentResult && !singleAgentResumeResult && !latestSingleAgentSuggestion ? (
                 <p className="panel-state">
                   No AI reply draft exists for this ticket yet. Generate one to start the review
                   workflow.
                 </p>
               ) : null}
 
-              {!loadingSuggestions && latestSingleAgentSuggestion ? (
+              {/* Workflow pending review state */}
+              {singleAgentResult ? (
+                <div className="ai-panel-stack">
+                  {/* Workflow summary grid (mirrors Multi-Agent) */}
+                  <div className="multi-agent-summary-grid">
+                    <article className="meta-card">
+                      <span className="meta-card__label">Workflow status</span>
+                      <strong>{toLabel(singleAgentResult.status)}</strong>
+                      <span>
+                        Pending node: {toLabel(singleAgentResult.pending_node)}
+                      </span>
+                    </article>
+                    <article className="meta-card">
+                      <span className="meta-card__label">Run ID</span>
+                      <strong className="meta-card__value--mono">{singleAgentResult.run_id}</strong>
+                      <span>Thread ID: {singleAgentResult.thread_id}</span>
+                    </article>
+                    <article className="meta-card">
+                      <span className="meta-card__label">Confidence</span>
+                      <strong>{formatConfidence(singleAgentResult.confidence)}</strong>
+                      <span>{singleAgentResult.sources.length} sources</span>
+                    </article>
+                    <article className="meta-card">
+                      <span className="meta-card__label">Knowledge hits</span>
+                      <strong>{singleAgentResult.knowledge_hits.length}</strong>
+                      <span>{singleAgentResult.similar_tickets.length} similar tickets</span>
+                    </article>
+                  </div>
+
+                  {/* Draft reply card */}
+                  <article className="suggestion-card">
+                    <div className="suggestion-card__header">
+                      <div>
+                        <strong>Draft reply</strong>
+                        <span>
+                          Confidence {formatConfidence(singleAgentResult.draft_reply.confidence)}
+                        </span>
+                      </div>
+                      <span className="badge badge--suggestion-status badge--draft">
+                        Pending Review
+                      </span>
+                    </div>
+                    <p className="suggestion-card__label">Original AI draft</p>
+                    <p className="suggestion-card__content">{singleAgentResult.draft_reply.suggested_content}</p>
+                    <div className="detail-stack detail-stack--compact">
+                      <div className="detail-row">
+                        <span>Reasoning summary</span>
+                        <strong>{singleAgentResult.draft_reply.reasoning_summary ?? "Not provided"}</strong>
+                      </div>
+                    </div>
+                  </article>
+
+                  {/* Sources panel */}
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Sources</p>
+                        <h3>RAG references</h3>
+                      </div>
+                    </div>
+
+                    {singleAgentResult.sources.length === 0 ? (
+                      <p className="panel-state">
+                        No strong knowledge match was retrieved, so this draft should be reviewed
+                        carefully before approval.
+                      </p>
+                    ) : (
+                      <div className="source-list">
+                        {singleAgentResult.sources.map((source) => (
+                          <article key={source.chunk_id} className="source-card">
+                            <div className="source-card__header">
+                              <div>
+                                <strong>Document #{source.doc_id}</strong>
+                                <span>
+                                  Chunk {source.chunk_index} · ID {source.chunk_id}
+                                </span>
+                              </div>
+                              <span className="badge badge--score">
+                                Score {source.score.toFixed(3)}
+                              </span>
+                            </div>
+                            <p>{source.content_preview}</p>
+                            <Link to={`/knowledge/${source.doc_id}`} className="ghost-link">
+                              View knowledge document
+                            </Link>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+
+                  {/* Review form */}
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Human Review</p>
+                        <h3>Approve, edit, or reject</h3>
+                      </div>
+                    </div>
+
+                    {singleAgentReviewSuccess ? (
+                      <p className="form-success">{singleAgentReviewSuccess}</p>
+                    ) : null}
+                    {singleAgentReviewError ? (
+                      <p className="form-error">{singleAgentReviewError}</p>
+                    ) : null}
+
+                    {canReview ? (
+                      <div className="review-stack">
+                        <label className="field">
+                          <span>Editable final reply</span>
+                          <textarea
+                            value={singleAgentReviewDraftContent}
+                            onChange={(event) => setSingleAgentReviewDraftContent(event.target.value)}
+                            rows={7}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Reject reason</span>
+                          <textarea
+                            value={singleAgentReviewRejectReason}
+                            onChange={(event) => setSingleAgentReviewRejectReason(event.target.value)}
+                            placeholder="Explain why the AI draft is not safe or accurate enough."
+                            rows={3}
+                          />
+                        </label>
+
+                        <div className="review-actions">
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={handleSingleAgentApprove}
+                            disabled={isSubmittingSingleAgentReview}
+                          >
+                            {isSubmittingSingleAgentReview ? "Saving..." : "Approve current reply"}
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={handleSingleAgentEdit}
+                            disabled={isSubmittingSingleAgentReview}
+                          >
+                            Save edited approval
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button ghost-button--danger"
+                            onClick={handleSingleAgentReject}
+                            disabled={isSubmittingSingleAgentReview}
+                          >
+                            Reject draft
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="review-stack">
+                        <p>当前角色仅可查看 AI 建议，不能执行审核操作。</p>
+                      </div>
+                    )}
+                  </article>
+                </div>
+              ) : null}
+
+              {/* Workflow completed state (resume result) */}
+              {!singleAgentResult && singleAgentResumeResult ? (
+                <div className="ai-panel-stack">
+                  <div className="multi-agent-summary-grid">
+                    <article className="meta-card">
+                      <span className="meta-card__label">Workflow status</span>
+                      <strong>Completed</strong>
+                      <span>Workflow finalized</span>
+                    </article>
+                    <article className="meta-card">
+                      <span className="meta-card__label">Run ID</span>
+                      <strong className="meta-card__value--mono">
+                        {latestAgentRun?.run_id ?? "N/A"}
+                      </strong>
+                      <span>Status: {toLabel(latestAgentRun?.status ?? "completed")}</span>
+                    </article>
+                  </div>
+
+                  <article className="panel panel--subtle">
+                    <div className="panel-heading">
+                      <div>
+                        <p className="panel-tag">Review Complete</p>
+                        <h3>Single-agent workflow finalized</h3>
+                      </div>
+                      <span className="badge badge--score">
+                        {singleAgentResumeResult.review_decision
+                          ? toLabel(String((singleAgentResumeResult.review_decision as Record<string, unknown>).action ?? "completed"))
+                          : "Completed"}
+                      </span>
+                    </div>
+
+                    {singleAgentResumeResult.reviewed_suggestion ? (
+                      <div className="panel-actions">
+                        <div className="agent-card__summary">
+                          <span>Status</span>
+                          <strong>{singleAgentResumeResult.reviewed_suggestion.status}</strong>
+                          <p>{singleAgentResumeResult.reviewed_suggestion.final_content
+                            ?? singleAgentResumeResult.reviewed_suggestion.suggested_content}</p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {singleAgentReviewSuccess ? (
+                      <p className="form-success" style={{ marginTop: "0.5rem" }}>
+                        {singleAgentReviewSuccess}
+                      </p>
+                    ) : null}
+                  </article>
+                </div>
+              ) : null}
+
+              {/* Fallback: display existing AISuggestion from DB (backward compat for previously-reviewed suggestions) */}
+              {!singleAgentResult && !singleAgentResumeResult && !loadingSuggestions && latestSingleAgentSuggestion ? (
                 <div className="ai-panel-stack">
                   <article className="suggestion-card">
                     <div className="suggestion-card__header">
@@ -1700,6 +2162,121 @@ export default function TicketDetailPage() {
                 ))}
               </div>
             )}
+          </article>
+
+          <article className="panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-tag">Agent Run History</p>
+                <h3>View all agent runs</h3>
+              </div>
+            </div>
+
+            <div className="filter-bar" style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}>
+              <label className="field" style={{ flex: 1 }}>
+                <span>Run Type</span>
+                <select
+                  value={agentRunTypeFilter}
+                  onChange={(event_) => setAgentRunTypeFilter(event_.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="multi_agent">Multi-Agent</option>
+                  <option value="workflow">Single-Agent Workflow</option>
+                </select>
+              </label>
+              <label className="field" style={{ flex: 1 }}>
+                <span>Status</span>
+                <select
+                  value={agentRunStatusFilter}
+                  onChange={(event_) => setAgentRunStatusFilter(event_.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="interrupted">Interrupted</option>
+                  <option value="completed">Completed</option>
+                  <option value="failed">Failed</option>
+                </select>
+              </label>
+            </div>
+
+            {agentRunHistoryLoading ? (
+              <p className="panel-state">Loading agent run history...</p>
+            ) : agentRunHistoryError ? (
+              <p className="form-error">{agentRunHistoryError}</p>
+            ) : agentRunHistory.length === 0 ? (
+              agentRunTypeFilter === "workflow" ? (
+                <p className="panel-state">
+                  No Single-Agent Workflow runs found for this ticket. Generate a single-agent reply
+                  draft from the Single-Agent RAG section above to create one.
+                </p>
+              ) : (
+                <p className="panel-state">No agent runs found for the selected filters.</p>
+              )
+            ) : (
+              <div className="run-history-list">
+                {agentRunHistory.map((run) => (
+                  <article key={run.run_id} className="source-card" style={{ marginBottom: "0.5rem" }}>
+                    <div className="source-card__header">
+                      <div>
+                        <strong>Run: {run.run_id.substring(0, 12)}…</strong>
+                        <span>
+                          {run.run_type} · {toLabel(run.status)} ·{" "}
+                          {formatDateTime(run.created_at)}
+                        </span>
+                      </div>
+                      <span className="badge badge--score">
+                        {run.audit_trail_json.length} audit entries
+                      </span>
+                    </div>
+
+                    {run.error_message ? (
+                      <p className="form-error" style={{ marginTop: "0.25rem" }}>
+                        {run.error_message}
+                      </p>
+                    ) : null}
+
+                    <details
+                      className="json-disclosure"
+                      style={{ marginTop: "0.5rem" }}
+                      open={expandedAgentRunId === run.run_id}
+                      onToggle={(event_) => {
+                        if (event_.currentTarget.open) {
+                          setExpandedAgentRunId(run.run_id);
+                        } else if (expandedAgentRunId === run.run_id) {
+                          setExpandedAgentRunId(null);
+                        }
+                      }}
+                    >
+                      <summary>View details</summary>
+                      <pre className="json-block" style={{ maxHeight: "300px", overflow: "auto" }}>
+{JSON.stringify(run, null, 2)}
+                      </pre>
+                    </details>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            <div className="pagination-bar" style={{ display: "flex", gap: "0.5rem", alignItems: "center", justifyContent: "flex-end", marginTop: "1rem" }}>
+              <span style={{ fontSize: "0.875rem", color: "var(--color-text-soft)" }}>
+                Page {agentRunCurrentPage} of {agentRunTotalPages}
+              </span>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={!canGoPreviousAgentRun}
+                onClick={() => setAgentRunOffset((value) => Math.max(0, value - AGENT_RUN_PAGE_SIZE))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={!canGoNextAgentRun}
+                onClick={() => setAgentRunOffset((value) => value + AGENT_RUN_PAGE_SIZE)}
+              >
+                Next
+              </button>
+            </div>
           </article>
         </>
       ) : null}

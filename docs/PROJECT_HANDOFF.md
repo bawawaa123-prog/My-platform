@@ -984,7 +984,92 @@ Goal 3 — 修复 approve 按钮提交 textarea 内容：
 
 ---
 
-### source_workflow 数据库字段缺失修复 + 前端布局调整 (2026-07-04)
+### AgentRunLog 单 Agent 工作流补充 + Run Type 筛选修复 (2026-07-05)
+
+#### 背景
+
+Agent Run History 只显示 Multi-Agent 运行记录（`run_type="multi_agent"`），不显示单 Agent 工作流（Single-Agent Workflow）的运行记录。用户在工单详情页执行 Single-Agent（生成回复 → 人工审核确认）后，Agent Run History 筛选 "Workflow" 时始终显示空白。
+
+**根本原因（双层）：**
+
+1. **缺少 AgentRunLog 写入**：`TicketAgentGraph.start()` 和 `TicketAgentGraph.resume()` 不创建 AgentRunLog 条目。只有 `TicketMultiAgentGraph` 写入 AgentRunLog（始终使用 `run_type="multi_agent"`）。
+2. **`model_dump()` 默认不含 `mode="json"`**：`TicketAgentGraph._finalize()` 和 `_serialize_ticket()` 使用 `model_dump()` 而非 `model_dump(mode="json")`，导致 `final_output` 包含 Python datetime 对象，无法被 MySQL JSON 列序列化（`TypeError: Object of type datetime is not JSON serializable`）。
+
+#### 变更内容
+
+**后端 — `backend/app/graphs/ticket_agent_graph.py`：**
+
+- 新增 `from app.services.agent_run_service import AgentRunService`
+- `__init__` 新增 `self.agent_run_service = AgentRunService(db)`
+- `start()` 方法：
+  - 新增参数 `created_by_user_id: int | None = None`
+  - 成功后 upsert AgentRunLog（`run_type="workflow"`, `status="interrupted"`）
+  - 异常时 rollback + upsert AgentRunLog（`run_type="workflow"`, `status="failed"`）
+- `resume()` 方法：
+  - 成功后 upsert AgentRunLog（`run_type="workflow"`, `status="completed"`）
+- `_finalize()` 方法：
+  - `model_dump()` → `model_dump(mode="json")`（datetime 序列化为 ISO 字符串）
+- `_serialize_ticket()` 方法：
+  - `model_dump()` → `model_dump(mode="json")`
+
+**后端 — `backend/app/api/ai.py`：**
+
+- `start_ticket_process()` 调用 `TicketAgentGraph(db).start(ticket_id, created_by_user_id=current_user.id)` 传入创建人 ID
+
+**前端 — `frontend/src/pages/TicketDetailPage.tsx`：**
+
+- Run Type 筛选项 "Workflow" → "Single-Agent Workflow"（值保持 `"workflow"`）
+- 筛选 "Single-Agent Workflow" 且结果为空时，显示引导说明："No runs recorded for Single-Agent Workflow... To see single-agent results, run the AI suggestion workflow from the Single-Agent RAG section above."
+
+**新增测试文件 — `backend/tests/test_agent_run_log.py`：**
+
+5 个 pytest 测试，验证单 Agent 工作流 AgentRunLog 的完整生命周期：
+
+1. `test_single_agent_start_creates_interrupted_run_log` — start 后 run_type="workflow", status="interrupted"
+2. `test_single_agent_approve_updates_to_completed` — resume approve 后 status="completed", reviewed_suggestion approved
+3. `test_single_agent_edit_updates_to_completed` — resume edit 后 status="completed"
+4. `test_single_agent_reject_updates_to_completed` — resume reject 后 status="completed"
+5. `test_workflow_filter_shows_only_workflow_runs` — workflow 筛选只返回 workflow 记录，multi_agent 筛选只返回 multi_agent 记录
+
+#### 新增文件
+
+- `backend/tests/test_agent_run_log.py`
+
+#### 修改文件
+
+- `backend/app/graphs/ticket_agent_graph.py` — AgentRunLog 写入 + datetime JSON 序列化修复
+- `backend/app/api/ai.py` — 传入 `created_by_user_id`
+- `frontend/src/pages/TicketDetailPage.tsx` — Workflow 选项重命名 + 空状态引导说明
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无（AgentRunLog 表不变，新增 `run_type="workflow"` 的记录值）
+
+#### API 变化
+
+- 无（复用已有 AgentRunLog 查询接口，新增 `run_type="workflow"` 记录可被现有筛选查询到）
+
+#### 前端变化
+
+- Run Type 下拉选项 "Workflow" → "Single-Agent Workflow"
+- Single-Agent Workflow 筛选空状态时显示引导说明
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- `TicketAgentGraph` 开始写入 AgentRunLog（`run_type="workflow"`）
+- 执行模式与 Multi-Agent 一致：start 时写 interrupted，resume 时更新为 completed
+
+#### 验证记录
+
+- `python -m pytest tests/test_agent_run_log.py -q -v`：5 passed
+- `python -m pytest -q`：91 passed（86 旧 + 5 新，全部通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-Bz9SzA48.js (337.37 kB), dist/assets/index-CzLdNN7M.css (21.33 kB)
 
 #### 根本原因
 

@@ -234,3 +234,81 @@ export async function listTicketAgentRuns(ticketId: number) {
   const response = await apiClient.get<AgentRunLogRead[]>(`/ai/tickets/${ticketId}/agent-runs`);
   return response.data;
 }
+
+export type AgentRunLogPage = {
+  items: AgentRunLogRead[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AgentRunLogPageParams = {
+  run_type?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export async function listTicketAgentRunsPage(
+  ticketId: number,
+  params: AgentRunLogPageParams = {},
+) {
+  const response = await apiClient.get<AgentRunLogPage>(
+    `/ai/tickets/${ticketId}/agent-runs/page`,
+    { params },
+  );
+  return response.data;
+}
+
+export type AIWorkflowPendingReviewRead = {
+  run_id: string;
+  thread_id: string;
+  status: "pending_review";
+  pending_node: string;
+  interrupt_id: string | null;
+  ticket: TicketRead;
+  classification: TicketClassification;
+  knowledge_hits: Record<string, unknown>[];
+  similar_tickets: Record<string, unknown>[];
+  draft_reply: AIReplyDraftRead;
+  sources: AIReplySource[];
+  confidence: number;
+  risk_check: Record<string, unknown>;
+};
+
+export type AIWorkflowProcessRead = {
+  ticket: Record<string, unknown>;
+  classification: Record<string, unknown>;
+  knowledge_hits: Record<string, unknown>[];
+  similar_tickets: Record<string, unknown>[];
+  reply_suggestion: Record<string, unknown>;
+  risk_check: Record<string, unknown>;
+  reviewed_suggestion: AIReplyDraftRead | null;
+  review_decision: Record<string, unknown> | null;
+};
+
+export type AIWorkflowResumePayload = {
+  action: "approve" | "edit" | "reject";
+  thread_id?: string;
+  run_id?: string;
+  final_content?: string;
+  reject_reason?: string;
+};
+
+export async function startSingleAgentProcess(ticketId: number) {
+  const response = await apiClient.post<AIWorkflowPendingReviewRead>(
+    `/ai/tickets/${ticketId}/process/start`,
+  );
+  return response.data;
+}
+
+export async function resumeSingleAgentProcess(
+  ticketId: number,
+  payload: AIWorkflowResumePayload,
+) {
+  const response = await apiClient.post<AIWorkflowProcessRead>(
+    `/ai/tickets/${ticketId}/process/resume`,
+    payload,
+  );
+  return response.data;
+}

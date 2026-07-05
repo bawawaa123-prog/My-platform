@@ -6,7 +6,7 @@ LastEditTime: 2026-07-04 20:43:09
 FilePath: \My-platform\backend\app\repositories\agent_run_repository.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.agent_run_log import AgentRunLog

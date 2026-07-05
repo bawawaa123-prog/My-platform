@@ -57,8 +57,14 @@ class AgentRunService:
             existing.created_by = created_by
         return self.repository.save(existing)
 
-    def list_by_ticket_id(self, ticket_id: int) -> list[AgentRunLog]:
-        return self.repository.list_by_ticket_id(ticket_id)
+    def list_by_ticket_id(
+        self, 
+        ticket_id: int,
+        *,
+        run_type: str | None = None,
+        status: str | None = None,
+        ) -> list[AgentRunLog]:
+        return self.repository.list_filtered(ticket_id=ticket_id, run_type=run_type, status=status)
 
     def get_by_run_id(self, run_id: str) -> AgentRunLog:
         run_log = self.repository.get_by_run_id(run_id)

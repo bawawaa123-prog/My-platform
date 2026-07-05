@@ -1,6 +1,7 @@
 import logging
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status,Query
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ from app.db.session import get_db
 from app.graphs.ticket_agent_graph import TicketAgentGraph
 from app.graphs.ticket_multi_agent_graph import TicketMultiAgentGraph
 from app.models.user import User
-from app.schemas.agent import AgentRunLogRead
+from app.schemas.agent import AgentRunLogPage, AgentRunLogRead
 from app.schemas.ai import (
     AIMultiAgentPendingReviewRead,
     AIMultiAgentProcessRead,
@@ -47,7 +48,25 @@ def generate_ticket_reply(
 ) -> AIReplyDraftRead:
     # 这里直接走 RAG 服务生成回复草稿，并把来源与置信度一起返回。
     ticket = TicketService(db).get_ticket(ticket_id)
-    return RagService(db).generate_ticket_reply(ticket)
+    suggestion = RagService(db).generate_ticket_reply(ticket)
+
+    # 持久化 AgentRunLog，使 Agent Run History 可追溯单 Agent 执行
+    AgentRunService(db).upsert_run_log(
+        ticket_id=ticket_id,
+        run_id=str(uuid4()),
+        run_type="workflow",
+        status="completed",
+        input_json={"ticket_id": ticket_id},
+        output_json={
+            "suggestion_id": suggestion.id,
+            "suggested_content": suggestion.suggested_content,
+            "confidence": suggestion.confidence,
+        },
+        audit_trail_json=[],
+        created_by=current_user.id,
+    )
+
+    return suggestion
 
 
 @router.get("/tickets/{ticket_id}/suggestions", response_model=list[AIReplyDraftRead])
@@ -92,7 +111,7 @@ def start_ticket_process(
     # start 跑到人工审核节点就暂停，并返回待审核上下文。
     TicketService(db).get_ticket(ticket_id)
     try:
-        return TicketAgentGraph(db).start(ticket_id)
+        return TicketAgentGraph(db).start(ticket_id, created_by_user_id=current_user.id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -185,9 +204,15 @@ def list_ticket_agent_runs(
     ticket_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    run_type: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
 ) -> list[AgentRunLogRead]:
     TicketService(db).get_ticket(ticket_id)
-    run_logs = AgentRunService(db).list_by_ticket_id(ticket_id)
+    run_logs = AgentRunService(db).list_by_ticket_id(
+        ticket_id=ticket_id,
+        run_type=run_type,
+        status=status_filter
+    )
     return [AgentRunLogRead.model_validate(run_log) for run_log in run_logs]
 
 
@@ -199,3 +224,29 @@ def get_agent_run(
 ) -> AgentRunLogRead:
     run_log = AgentRunService(db).get_by_run_id(run_id)
     return AgentRunLogRead.model_validate(run_log)
+
+
+@router.get("/tickets/{ticket_id}/agent-runs/page", response_model=AgentRunLogPage)
+def list_ticket_agent_runs_page(
+    ticket_id: int,
+    run_type: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AgentRunLogPage:
+    TicketService(db).get_ticket(ticket_id)
+    run_logs = AgentRunService(db).list_page_by_id(
+        ticket_id=ticket_id,
+        run_type=run_type,
+        status=status_filter,
+        limit=limit,
+        offset=offset
+    )
+    return AgentRunLogPage(
+        items=[AgentRunLogRead.model_validate(run_log) for run_log in run_logs["items"]],
+        total=run_logs["total"],
+        limit=run_logs["limit"],
+        offset=run_logs["offset"],
+    )
