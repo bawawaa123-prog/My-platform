@@ -2,10 +2,10 @@
 
 ## 1. 当前进度
 
-- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列、审核后自动追加 ticket message
-- 当前日期：2026-07-03
+- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列、Conversation history 清理（AI Reply 不再自动追加为 ticket message）、时区显示修复（datetime 序列化含 UTC 时区 + 前端统一 formatDateTime）
+- 当前日期：2026-07-04
 - 当前状态：可运行
-- 最近一次变更：Step 6 — 审核 AI Suggestion 后追加 ticket message 测试 + 前端消息刷新（2026-07-03）
+- 最近一次变更：AI Reply / Multi-Agent 前端展示分离 — AISuggestion 新增 `source_workflow` 字段（single_agent / multi_agent）；Single-Agent RAG 模块只展示 single_agent suggestion；Multi-Agent 模块独立展示自己的草稿和审核入口；新增 Final Human-Reviewed Reply 独立卡片；修复 Multi-Agent 审核完成后重新进入页面结果丢失问题
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -625,6 +625,419 @@ Step 37
 - 构建产物：dist/assets/index-BmyZl1eX.js (329.32 kB), dist/assets/index-CzLdNN7M.css (21.33 kB)
 
 ---
+
+### Conversation history 清理 (2026-07-04)：AI Reply 不再自动追加为 ticket message
+
+#### 背景
+
+此前 approve / edit AI Suggestion 时，后端 ReviewService 会通过 `_append_review_message` 自动将 final_content 作为 `sender_type="agent"` 的 ticket message 写入 Conversation history，导致：
+
+- Conversation history 混入 AI 审核记录，无法区分真实沟通记录与系统自动追加内容
+- 前端用户在 textarea 中编辑内容后点击 "Approve as drafted" 主按钮，后端只保存原始 AI 的 `suggested_content`，忽略用户编辑
+- AI Reply 卡片始终显示 `suggested_content`，未区分 Original AI draft 和 Final reviewed reply
+
+#### 变更内容
+
+**后端 — `backend/app/services/review_service.py`：**
+
+- `approve_suggestion`：移除 `_append_review_message` 调用，保留 status/reviewed_by/reviewed_at/final_content/audit_log 保存
+- `edit_suggestion`：移除 `_append_review_message` 调用，保留同上的审核逻辑
+- 删除 `_append_review_message` 方法（不再使用）
+- 清理不再需要的导入：`TicketMessageCreate`、`TicketService`
+
+注意：`final_content` 仍然正确保存到 `ai_suggestions` 表，审核结果未丢失。
+
+**前端 — `frontend/src/pages/TicketDetailPage.tsx`：**
+
+Goal 2 — 区分 Original AI draft 和 Final reviewed reply 显示：
+- draft 状态：显示 "Original AI draft" 标签 + `suggested_content`
+- approved/edited 状态：显示 "Final reviewed reply" 标签 + `final_content ?? suggested_content`
+- 如果 `final_content` 与 `suggested_content` 不同，增加折叠的 "View Original AI draft" 方便对比
+
+Goal 3 — 修复 approve 按钮提交 textarea 内容：
+- `handleApproveSuggestion`：读取 `reviewDraftContent.trim()`，传给 `approveSuggestion(id, { final_content })`，空内容时提示错误
+- `handleMultiAgentApprove`：读取 `multiAgentReviewDraftContent.trim()`，传给 `resumeMultiAgentProcess(..., { final_content })`，空内容时提示错误
+- 按钮文案从 "Approve as drafted" 改为 "Approve current reply"，避免用户误以为仅提交原文
+
+#### 测试更新
+
+**`backend/tests/test_reviews.py`（6 个测试变更）：**
+- `test_approve_suggestion_does_not_append_ticket_message` — 验证 approve 后无新增 ticket message
+- `test_approve_suggestion_with_custom_content_saves_final_content` — 验证自定义 final_content 正确保存且无 message
+- `test_edit_suggestion_does_not_append_ticket_message` — 验证 edit 后无新增 ticket message
+- `test_reject_suggestion_does_not_append_ticket_message` — 保持不变（原已正确）
+- `test_reviewed_suggestion_cannot_be_reviewed_again` — 简化为只验证 status 变更而非 message 重复
+- `test_viewer_review_does_not_affect_suggestion` — 更名为更准确的描述
+
+**`backend/tests/test_ai.py`（2 个测试变更）：**
+- `test_multi_agent_resume_approve_completes_run_without_ticket_message` — 验证 approve 后无 message
+- `test_multi_agent_resume_edit_saves_final_content_without_ticket_message` — 验证 edit 后无 message
+
+#### 新增文件
+
+- 无
+
+#### 修改文件
+
+- `backend/app/services/review_service.py` — 删除 `_append_review_message` 调用和方法，清理导入
+- `frontend/src/pages/TicketDetailPage.tsx` — 修复 AI Reply 卡片显示和 approve 提交内容
+- `backend/tests/test_reviews.py` — 6 个测试改为验证不追加 ticket message
+- `backend/tests/test_ai.py` — 2 个测试改为验证 Multi-Agent 不追加 ticket message
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无（仅修改业务层逻辑）
+
+#### API 变化
+
+- 无（复用已有 review / multi-agent resume 接口）
+
+#### 前端变化
+
+- AI Reply 卡片根据 status 显示不同标签和内容
+- "Approve current reply" 主按钮现在提交 textarea 内容作为 final_content
+- Multi-Agent 的 "Approve current reply" 按钮同样提交 textarea 内容
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- ReviewService 不再自动追加 ticket message
+- Multi-Agent `_human_review` → `apply_review_action` 链路上层调用不受影响
+
+#### 验证记录
+
+- `python -m pytest -q`：71 passed（全部后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 手动验证步骤：
+  1. 创建工单 → 生成 AI Reply draft → 在 textarea 输入 "你好" → 点击 "Approve current reply" → 确认 Final reviewed reply 显示 "你好"，Conversation history 无新增记录
+  2. 在 "Add communication record" 发一条消息 → 确认消息出现在 Conversation history
+  3. 运行 Multi-Agent → 审核通过 → 确认 Conversation history 无自动追加记录
+
+---
+
+### 时区显示修复 (2026-07-04)：所有 datetime 字段序列化含 UTC 时区信息 + 前端统一 formatDateTime
+
+#### 背景
+
+`reviewed_at` 等 datetime 字段在前端显示时比本地时间（UTC+8）少 8 小时。根因是双层的：
+
+- **后端**：SQLite 存储 UTC 时间，但 SQLAlchemy 返回的可能是 naive datetime（无 tzinfo）。Pydantic v2 序列化 naive datetime 时不追加 `+00:00`，导致 JSON 中的时间字符串没有时区后缀。
+- **前端**：`new Date("2026-07-04T12:17:00")` 将不带时区的字符串解释为**本地时间**（UTC+8），因此 12:17 UTC 显示为 12:17 CST（本应为 20:17 CST）。
+
+#### 后端变更
+
+1. **新增 `backend/app/utils/datetime_utils.py`**：
+   - `ensure_utc(value)`：Pydantic `BeforeValidator`，naive datetime → 追加 `timezone.utc`，aware datetime 保持不变，None 透传
+   - `UTCDatetime`：`Annotated[datetime, BeforeValidator(ensure_utc)]`，可作为 Pydantic schema 字段类型
+
+2. **所有 schema 文件中的 datetime 字段替换为 UTCDatetime**：
+   - `schemas/ticket.py`：`TicketRead` — `created_at` / `updated_at` / `closed_at`
+   - `schemas/ticket_message.py`：`TicketMessageRead` — `created_at` / `updated_at`
+   - `schemas/ai.py`：`AIReplyDraftRead` / `AIMultiAgentPendingReviewRead` / `AIMultiAgentProcessRead` — `created_at` / `updated_at` / `reviewed_at`
+   - `schemas/review.py`：`PendingSuggestionRead` / `SuggestionReviewResponse` — `created_at` / `updated_at` / `reviewed_at`
+   - `schemas/agent.py`：`AgentRunLogRead` — `created_at` / `updated_at`
+   - `schemas/audit_log.py`：`AuditLogRead` — `created_at`
+   - `schemas/knowledge.py`：`KnowledgeChunkRead` / `KnowledgeDocRead` — `created_at` / `updated_at`
+   - `schemas/user.py`：`UserRead` — `created_at` / `updated_at`
+
+#### 前端变更
+
+1. **新增 `frontend/src/utils/date.ts`**：
+   - `parseApiDateTime(value)`：解析 API 返回的 datetime 字符串。如果已是 aware（带 `Z` 或 `+/-HH:MM`），直接 `new Date()`；否则（naive 字符串）先追加 `Z` 再 `new Date()`，确保 JS 将其解释为 UTC 而非本地时间。无效值返回 `null`。
+   - `formatDateTime(value)`：统一格式化函数，处理 `null`/空值返回 "Not available"，使用 `Intl.DateTimeFormat("zh-CN")` 按本地时区显示。
+   - `parseApiDateTime` 内部检测正则：`/[Z+-]\d{2}:\d{2}$/` 或 `.endsWith("Z")`
+
+2. **删除 6 个页面的本地 `formatDateTime` 定义，统一导入 `formatDateTime`**：
+   - `AuditLogsPage.tsx`
+   - `KnowledgeDetailPage.tsx`
+   - `KnowledgePage.tsx`
+   - `PendingReviewsPage.tsx`
+   - `TicketDetailPage.tsx`（原特有 null 保护 → 内置在工具函数中）
+   - `TicketsPage.tsx`
+
+#### 测试
+
+1. **新增 `backend/tests/test_datetime_utils.py`**（5 个测试）：
+
+   - `test_ensure_utc_preserves_aware_datetime` — aware datetime 时区信息不丢失
+   - `test_ensure_utc_adds_utc_to_naive` — naive datetime 自动追加 UTC
+   - `test_ensure_utc_handles_none` — None 透传
+   - `test_utcdatetime_serializes_with_timezone` — 创建工单返回的 `created_at` 包含 `+00:00` 或 `Z`
+   - `test_ticket_list_returns_utc_datetimes` — 工单列表页中 `created_at` / `updated_at` 均含时区信息
+
+#### 新增文件
+
+- `backend/app/utils/__init__.py`
+- `backend/app/utils/datetime_utils.py`
+- `frontend/src/utils/date.ts`
+- `backend/tests/test_datetime_utils.py`
+
+#### 修改文件
+
+- `backend/app/schemas/ticket.py` — datetime → UTCDatetime
+- `backend/app/schemas/ticket_message.py` — datetime → UTCDatetime
+- `backend/app/schemas/ai.py` — datetime → UTCDatetime
+- `backend/app/schemas/review.py` — datetime → UTCDatetime
+- `backend/app/schemas/agent.py` — datetime → UTCDatetime
+- `backend/app/schemas/audit_log.py` — datetime → UTCDatetime
+- `backend/app/schemas/knowledge.py` — datetime → UTCDatetime
+- `backend/app/schemas/user.py` — datetime → UTCDatetime
+- `frontend/src/pages/AuditLogsPage.tsx` — 移除本地 formatDateTime，导入统一函数
+- `frontend/src/pages/KnowledgeDetailPage.tsx` — 同上
+- `frontend/src/pages/KnowledgePage.tsx` — 同上
+- `frontend/src/pages/PendingReviewsPage.tsx` — 同上
+- `frontend/src/pages/TicketDetailPage.tsx` — 同上
+- `frontend/src/pages/TicketsPage.tsx` — 同上
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无（仅影响序列化 / 显示层，模型和存储未变）
+
+#### API 变化
+
+- 无（请求/响应结构不变，新增时区后缀 `+00:00`）
+
+#### 验证记录
+
+- `python -m pytest -q`：76 passed（5 个新增时区测试 + 71 个原有，全部通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-Da0u8cOD.js (330.16 kB), dist/assets/index-CzLdNN7M.css (21.33 kB)
+
+---
+
+### TimestampMixin 时区修复 (2026-07-04)：utc_now() + Python 级 UTC 默认值
+
+#### 背景
+
+时区显示修复后，AI Reply Suggestion card 中 `reviewed_at` 显示正确（20:47），但 `created_at`/`updated_at` 显示错误（04:46，比预期多 8 小时）。
+
+根因为 **TimestampMixin** 使用 `server_default=func.now()`，这会在数据库层求值。在 SQLite 下 `CURRENT_TIMESTAMP` 虽然返回 UTC，但 SQLAlchemy 读取时获得的是 naive datetime。当 naive datetime 通过 `UTCDatetime` 序列化为 `+00:00` 后缀时，前端 `new Date()` 将其解释为本地时间（UTC+8），导致实际为 UTC 的时间被额外加了 8 小时显示。
+
+而 `reviewed_at` 在 service 层通过 Python 的 `datetime.now(UTC)` 显式生成，虽然后经 SQLite 存储丢失 tzinfo 但被 `UTCDatetime` 修复。根源在于两类时间字段使用了不同的时间来源。
+
+#### 变更内容
+
+**后端 — `backend/app/db/base.py`：**
+
+- 新增 `utc_now()` 函数：`return datetime.now(timezone.utc)`，返回显式 aware UTC datetime
+- `TimestampMixin.created_at`：`server_default=func.now()` → `default=utc_now`
+- `TimestampMixin.updated_at`：`server_default=func.now(), onupdate=func.now()` → `default=utc_now, onupdate=utc_now`
+- 删除不再需要的 `from sqlalchemy import func`
+
+**后端 — `backend/app/models/ticket_embedding.py`：**
+
+- `created_at`：`server_default=func.now()` → `default=utc_now`（从 `base.py` 导入 `utc_now`）
+- 删除不再需要的 `from sqlalchemy import func`
+
+**新增测试 `backend/tests/test_datetime_utils.py`（新增 4 个测试，共 9 个）：**
+
+1. `test_utc_now_returns_aware_datetime` — 验证 `utc_now()` 返回 aware UTC datetime
+2. `test_suggestion_timestamps_all_utc` — 端到端：创建工单 → 生成 reply → approve → 验证 created_at/updated_at/reviewed_at 全部含 `Z` 后缀，三者均在同一时间窗口内，且 updated_at >= created_at、reviewed_at >= created_at
+3. `test_suggestion_list_returns_utc_timestamps` — `GET /api/reviews/pending-suggestions` 返回的 created_at/updated_at 均含 `Z` 后缀
+
+#### 前端变化
+
+- 无（前端 `formatDateTime`/`parseApiDateTime` 已在时区显示修复阶段完成）
+
+#### 新增文件
+
+- 无
+
+#### 修改文件
+
+- `backend/app/db/base.py` — 新增 `utc_now()`，TimestampMixin 使用 `default=utc_now` 和 `onupdate=utc_now`
+- `backend/app/models/ticket_embedding.py` — `created_at` 使用 `default=utc_now`
+- `backend/tests/test_datetime_utils.py` — 新增 4 个时区一致性测试
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更
+
+#### 删除文件
+
+- 无
+
+#### 数据库变化
+
+- 无（仅影响 Python ORM 层默认值生成，不修改数据库 schema）
+- **注意**：已有数据库记录的 `created_at`/`updated_at` 不会自动修复，如遇时间显示异常需重建数据库
+
+#### API 变化
+
+- 无（响应结构不变，但所有 datetime 字段现在统一使用 Python UTC 时间源）
+
+#### 要点总结
+
+- `utc_now()` 返回 `datetime.now(timezone.utc)` 作为唯一的 UTC 时间源
+- SQLite 存储后 tzinfo 虽被丢弃，但 `UTCDatetime` 序列化时追加 `+00:00`
+- 前端 `parseApiDateTime` 检测到 `Z`/`+00:00` 后缀，`new Date()` 正确按 UTC 解析并显示为本地时间
+- `updated_at` 的 `onupdate=utc_now` 在 Python flush 时求值，比 service 中的 `datetime.now(UTC)` 赋值晚约 1 微秒，但所有字段均在同一时间窗口内
+
+#### 验证记录
+
+- `python -m pytest -q`：79 passed（全部后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-Da0u8cOD.js (330.16 kB), dist/assets/index-CzLdNN7M.css (21.33 kB)
+
+---
+
+### AI Reply / Multi-Agent 前端展示分离 (2026-07-04)：source_workflow + TicketDetailPage 重构
+
+#### 背景
+
+原 TicketDetailPage 的 "AI Reply" 模块混用单 Agent 和 Multi-Agent 生成的回复草稿。单 Agent 通过 `generate-reply` 创建 `ai_suggestions`，Multi-Agent 的 ReplyAgent 也走 `rag_service._create_reply_suggestion` 落库到同一张表。前端 `listTicketSuggestions` 返回全部 reply 类型的 suggestion，取 `suggestions[0]` 作为 `latestSuggestion` 展示。结果：
+
+- Multi-Agent 的草稿也出现在 "AI REPLY" 模块
+- 退出工单详情页再进入，Multi-Agent 审核完成结果无法恢复（`loadAgentRuns` 只处理 `pending_review` 类型）
+- 页面概念混乱，"AI REPLY" 和 "HUMAN REVIEW" 同时承载单 Agent 和 Multi-Agent
+
+#### 变更内容
+
+**后端 — `backend/app/models/ai_suggestion.py`：**
+
+- 新增 `source_workflow` 字段：`Mapped[str] = mapped_column(String(50), nullable=False, default="single_agent", server_default="single_agent")`
+- 可选值：`"single_agent"` | `"multi_agent"`
+
+**后端 — `backend/app/schemas/ai.py`：**
+
+- `AIReplyDraftRead` 新增 `source_workflow: str = "single_agent"`
+
+**后端 — `backend/app/schemas/review.py`：**
+
+- `PendingSuggestionRead` 和 `SuggestionReviewResponse` 新增 `source_workflow: str = "single_agent"`
+
+**后端 — `backend/app/services/rag_service.py`：**
+
+- `_create_reply_suggestion` 新增 `source_workflow: str = "single_agent"` 参数，创建 `AISuggestion` 时传入
+- `generate_ticket_reply_from_context` 新增 `source_workflow` 参数，透传给 `_create_reply_suggestion`
+
+**后端 — `backend/app/services/review_service.py`：**
+
+- `list_pending_suggestions` 的 dict 中添加 `source_workflow`
+
+**后端 — `backend/app/agents/reply_agent.py`：**
+
+- ReplyAgent 调用 `generate_ticket_reply_from_context` 时传 `source_workflow="multi_agent"`
+
+**前端 — `frontend/src/api/ai.ts`：**
+
+- `AIReplyDraftRead` 新增可选字段 `source_workflow?: string`
+
+**前端 — `frontend/src/pages/TicketDetailPage.tsx`（大规模重构）：**
+
+1. **Single-Agent RAG 模块**（原 AI Reply 重命名）：
+   - panel-tag: `AI Reply` → `Single-Agent RAG`
+   - title: `Draft and human review` → `Single-agent reply draft`
+   - button: `Generate reply draft` → `Generate single-agent draft`
+   - 通过 `singleAgentSuggestions`（过滤 `source_workflow === "single_agent"`）展示，不再混入 Multi-Agent suggestion
+
+2. **Final Human-Reviewed Reply 独立模块**（新增）：
+   - panel-tag: `Final Review`, title: `Final human-reviewed replies`
+   - 分别展示 Single-Agent final reviewed reply（status=approved/edited/rejected）
+   - 和 Multi-Agent final reviewed reply（来自 `multiAgentFinalReviewedSuggestion`）
+   - 明确标注 `Source: Single-Agent` / `Source: Multi-Agent`
+   - 无 final review 时显示 `No final human-reviewed reply yet.`
+
+3. **修复 `loadAgentRuns` 完成状态恢复**：
+   - 新增 completed/finalized 识别逻辑：`latestRun.run_type === "multi_agent" && latestRun.status === "completed"` 时，从 `output_json.reviewed_suggestion` 恢复 `multiAgentResumeResult`
+   - `multiAgentResult` 仍用于 pending_review 的继续审核
+
+4. **Multi-Agent 模块兼容完成态**：
+   - 空状态检查 `!multiAgentResult && !multiAgentResumeResult`
+   - Summary grid 支持 `multiAgentResumeResult` 的 fallback 显示
+   - Audit trail 从 `multiAgentResult ?? multiAgentResumeResult` 读取
+
+5. **`buildAgentCards` 类型扩展**：接受 `AIMultiAgentPendingReviewRead | AIMultiAgentProcessRead`
+
+#### 前端变化
+
+- Single-Agent RAG 模块改名为 Single-Agent RAG，只展示单 Agent 建议
+- Multi-Agent 模块在 pending_review 和 completed 状态都可展示
+- 新增 Final Human-Reviewed Reply 卡片，同时展示单 Agent 和多 Agent 的最终审核结果
+- Agent timeline 数据源兼容 pending 和 completed 两种 state
+
+#### 数据库变化
+
+- `ai_suggestions` 表新增 `source_workflow` 列（String(50), default="single_agent"）
+- 旧数据兼容：`source_workflow` 缺失时按 `"single_agent"` 处理
+
+#### API 变化
+
+- 无（复用已有接口，`listTicketSuggestions`、`listPendingReviewSuggestions` 返回新增 `source_workflow` 字段）
+
+#### AI / RAG / LangGraph / MCP 变化
+
+- 半自动回复（单 Agent）创建的 suggestion 写入 `source_workflow="single_agent"`
+- Multi-Agent ReplyAgent 创建的 suggestion 写入 `source_workflow="multi_agent"`
+
+#### 验证记录
+
+- `python -m pytest -q`：79 passed（全部后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-DpDZTJee.js (333.59 kB), dist/assets/index-CzLdNN7M.css (21.33 kB)
+
+---
+
+### source_workflow 数据库字段缺失修复 + 前端布局调整 (2026-07-04)
+
+#### 根本原因
+
+上一轮重构在 `AISuggestion` ORM 模型中新增了 `source_workflow` 列（含 `server_default`），但 MySQL 数据库的 `ai_suggestions` 表是之前用 `CREATE TABLE` 创建的，不含该列。SQLAlchemy 的 `Base.metadata.create_all()` 对已存在的表不执行 ALTER TABLE，因此模型与数据库结构不一致。任何查询 `ai_suggestions` 的 SELECT 语句都会因 MySQL 报 `(1054, "Unknown column 'ai_suggestions.source_workflow'")` 而失败。
+
+报错链路：`listTicketSuggestions` → `list_reply_suggestions_by_ticket_id` → SQLAlchemy SELECT 包含 `source_workflow` → MySQL 报 1054 → ORM `OperationalError` → API 层 `except Exception as exc` 将原始 SQL 错误暴露给前端。
+
+#### 新增/修改文件
+
+**新增 — `scripts/sql/add_source_workflow_to_ai_suggestions.sql`**：
+- MySQL 迁移 SQL 脚本，内容：`ALTER TABLE ai_suggestions ADD COLUMN source_workflow VARCHAR(50) NOT NULL DEFAULT 'single_agent'`
+- 注释中包含 SQLite 兼容版本
+
+**修改 — `backend/app/db/init_db.py`**：
+- 新增 `sync_ai_suggestion_source_workflow()` 函数
+- 遵循项目已有的 `sync_*` 模式：使用 `inspect(engine)` 检查列是否存在，存在则跳过，否则执行 `ALTER TABLE`
+- 在 `init_db()` 中调用，同步时机在 `sync_ai_suggestion_review_columns()` 之后
+
+**修改 — `backend/app/api/ai.py`**：
+- 新增 `import logging` + `logger = logging.getLogger(__name__)`
+- 5 个 `except Exception as exc` 处理块改为 `logger.error(..., exc_info=True)` 记录完整异常栈，返回通用错误消息（如 `"Multi-agent workflow start failed. Please try again later."`），不再暴露原始 SQL/DB 细节给用户
+
+**修改 — `frontend/src/pages/TicketDetailPage.tsx`**：
+- Final Review 面板从 AI Agent Timeline 上方移到 Ticket Detail + Workflow 卡片下方（Single-Agent RAG 和 AI Classification 前面）
+- 删除了旧位置的重复 Final Review 面板
+- 最终页面顺序：Ticket Detail → Workflow Status → Final Review → Single-Agent RAG + AI Classification → AI Agent Timeline → Messages
+
+#### 数据库变化
+
+- `ai_suggestions` 新增 `source_workflow VARCHAR(50) NOT NULL DEFAULT 'single_agent'`
+- 旧数据自动获得 `source_workflow = 'single_agent'`
+
+#### API 变化
+
+- 所有 AI 相关 endpoint 在异常时不再暴露原始 SQL/DB 错误的详细信息给前端，改为通用错误消息；完整错误栈写入 server log
+
+#### 验证记录
+
+- `python -m app.db.init_db`：成功，输出 `Initialized database for: mysql+pymysql://...`
+- MySQL 验证：`DESCRIBE ai_suggestions` 显示 `source_workflow varchar(50) NO DEFAULT 'single_agent'`
+- `python -m pytest -q`：79 passed（全部后端测试通过）
+- `npm run build`：TypeScript + Vite 构建通过，0 错误
+- 构建产物：dist/assets/index-D2vwLwHb.js (333.59 kB)（JS 体积增加 ~3.43 kB 来自 Final Review 模块搬迁）
+
+#### 手动验证步骤
+
+1. `D:\tools\anaconda\envs\py312\python.exe -m app.db.init_db` — 确保 migration 执行
+2. 启动后端：`D:\tools\anaconda\envs\py312\python.exe -m uvicorn app.main:app --reload --port 8010`
+3. 启动前端：`npm run dev`
+4. 登录系统，进入任意工单详情页，确认不再出现 `Unknown column 'ai_suggestions.source_workflow'` 错误
+5. 确认页面布局：Final Review 面板在 Ticket Detail 下方、Single-Agent RAG 上方
+6. 点击 "Generate single-agent draft"，确认正常生成草稿
+7. 点击 "Run multi-agent analysis"，确认 Multi-Agent 工作流正常启动
 
 ## 4. 验证记录
 

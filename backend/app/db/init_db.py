@@ -14,6 +14,7 @@ def init_db() -> str:
     Base.metadata.create_all(bind=engine)
     sync_ticket_ai_columns()
     sync_ai_suggestion_review_columns()
+    sync_ai_suggestion_source_workflow()
     sync_ticket_embedding_table()
     seed_default_users()
     return str(engine.url)
@@ -80,6 +81,24 @@ def sync_ai_suggestion_review_columns() -> None:
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def sync_ai_suggestion_source_workflow() -> None:
+    inspector = inspect(engine)
+    if "ai_suggestions" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("ai_suggestions")}
+    if "source_workflow" in existing_columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE ai_suggestions "
+                "ADD COLUMN source_workflow VARCHAR(50) NOT NULL DEFAULT 'single_agent'"
+            )
+        )
 
 
 def sync_ticket_embedding_table() -> None:

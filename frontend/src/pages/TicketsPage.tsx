@@ -12,18 +12,12 @@ import {
   type TicketRead,
   type TicketStatus,
 } from "../api/tickets";
+import { formatDateTime } from "../utils/date";
 
 
 type FilterValue<T extends string> = T | "all";
 
 const PAGE_SIZE = 10;
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
 
 function toLabel(value: string) {
   return value

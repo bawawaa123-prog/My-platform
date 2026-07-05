@@ -24,6 +24,7 @@ export type AIReplyDraftRead = {
   id: number;
   ticket_id: number;
   suggestion_type: string;
+  source_workflow?: string;
   suggested_content: string;
   reasoning_summary: string | null;
   sources_json: AIReplySource[];

@@ -1,5 +1,9 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.auth import get_current_user
 from app.db.session import get_db
@@ -70,9 +74,10 @@ def process_ticket(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Ticket workflow execution failed (ticket_id=%s): %s", ticket_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ticket workflow execution failed: {exc}",
+            detail="Ticket workflow execution failed. Please try again later.",
         ) from exc
     return AIWorkflowProcessRead.model_validate(state["final_output"])
 
@@ -91,9 +96,10 @@ def start_ticket_process(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Ticket workflow start failed (ticket_id=%s): %s", ticket_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ticket workflow start failed: {exc}",
+            detail="Ticket workflow start failed. Please try again later.",
         ) from exc
 
 
@@ -118,9 +124,10 @@ def resume_ticket_process(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Ticket workflow resume failed (ticket_id=%s): %s", ticket_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ticket workflow resume failed: {exc}",
+            detail="Ticket workflow resume failed. Please try again later.",
         ) from exc
 
 
@@ -137,9 +144,10 @@ def start_multi_agent_ticket_process(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Multi-agent workflow start failed (ticket_id=%s): %s", ticket_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Multi-agent workflow start failed: {exc}",
+            detail="Multi-agent workflow start failed. Please try again later.",
         ) from exc
 
 
@@ -165,9 +173,10 @@ def resume_multi_agent_ticket_process(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Multi-agent workflow resume failed (ticket_id=%s): %s", ticket_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Multi-agent workflow resume failed: {exc}",
+            detail="Multi-agent workflow resume failed. Please try again later.",
         ) from exc
 
 

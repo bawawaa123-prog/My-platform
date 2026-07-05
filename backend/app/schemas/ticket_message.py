@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.utils.datetime_utils import UTCDatetime
+
 
 MessageSenderType = Literal["customer", "agent", "ai", "system"]
 
@@ -18,7 +20,7 @@ class TicketMessageRead(BaseModel):
     sender_type: str
     sender_name: str
     content: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)

@@ -7,15 +7,9 @@ import {
   type KnowledgeChunkRead,
   type KnowledgeDocRead,
 } from "../api/knowledge";
+import { formatDateTime } from "../utils/date";
 
 const PENDING_KNOWLEDGE_STATUSES = new Set(["uploaded", "processing"]);
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
 
 function toLabel(value: string) {
   return value

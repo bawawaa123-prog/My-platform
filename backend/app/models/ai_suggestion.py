@@ -12,6 +12,9 @@ class AISuggestion(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False, index=True)
     suggestion_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_workflow: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="single_agent", server_default="single_agent"
+    )
     suggested_content: Mapped[str] = mapped_column(Text, nullable=False)
     reasoning_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     sources_json: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)

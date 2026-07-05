@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, utc_now
 
 
 class TicketEmbedding(Base):
@@ -20,6 +20,6 @@ class TicketEmbedding(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        server_default=func.now(),
+        default=utc_now,
         nullable=False,
     )

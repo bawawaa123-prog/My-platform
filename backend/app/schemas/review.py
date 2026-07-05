@@ -10,6 +10,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.utils.datetime_utils import UTCDatetime
+
 
 class SuggestionApproveRequest(BaseModel):
     final_content: str | None = Field(default=None, min_length=1)
@@ -32,13 +34,14 @@ class PendingSuggestionRead(BaseModel):
     ticket_category: str
     customer_email: str
     suggestion_type: str
+    source_workflow: str = "single_agent"
     suggested_content: str
     reasoning_summary: str | None
     sources_json: list[dict]
     confidence: float
     status: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,16 +56,17 @@ class SuggestionReviewResponse(BaseModel):
     id: int
     ticket_id: int
     suggestion_type: str
+    source_workflow: str = "single_agent"
     suggested_content: str
     reasoning_summary: str | None
     sources_json: list[dict]
     confidence: float
     status: str
     reviewed_by: int | None
-    reviewed_at: datetime | None
+    reviewed_at: UTCDatetime | None
     final_content: str | None
     reject_reason: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)

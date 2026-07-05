@@ -29,6 +29,7 @@ class ReplyAgent(BaseTicketAgent):
             ticket,
             context,
             supplemental_context=supplemental_context,
+            source_workflow="multi_agent",
         )
         return {
             "agent_name": self.agent_name,

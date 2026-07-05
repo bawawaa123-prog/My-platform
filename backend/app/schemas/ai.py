@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.utils.datetime_utils import UTCDatetime
+
 from app.schemas.ticket import (
     RecommendedDepartment,
     TicketCategory,
@@ -34,17 +36,18 @@ class AIReplyDraftRead(BaseModel):
     id: int
     ticket_id: int
     suggestion_type: str
+    source_workflow: str = "single_agent"
     suggested_content: str
     reasoning_summary: str | None
     sources_json: list[AIReplySource]
     confidence: float
     status: str
     reviewed_by: int | None = None
-    reviewed_at: datetime | None = None
+    reviewed_at: UTCDatetime | None = None
     final_content: str | None = None
     reject_reason: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)
 

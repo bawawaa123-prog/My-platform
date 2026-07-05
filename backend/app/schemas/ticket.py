@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.utils.datetime_utils import UTCDatetime
+
 
 TicketCategory = Literal[
     "payment",
@@ -75,9 +77,9 @@ class TicketRead(BaseModel):
     recommended_department: RecommendedDepartment | None
     assigned_to: int | None
     created_by: int
-    closed_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
+    closed_at: UTCDatetime | None
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,3 +1,11 @@
+'''
+Author: Bwaw. 1294245800@qq.com
+Date: 2026-06-01 20:15:45
+LastEditors: Bwaw. 1294245800@qq.com
+LastEditTime: 2026-07-04 20:46:07
+FilePath: \My-platform\backend\app\services\agent_run_service.py
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+'''
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -60,3 +68,24 @@ class AgentRunService:
                 detail="Agent run log not found",
             )
         return run_log
+
+    def list_page_by_id(
+        self,
+        ticket_id: int,
+        *,
+        run_type: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        total = self.repository.count_filtered(
+            ticket_id=ticket_id, run_type=run_type, status=status
+        )
+        items = self.repository.list_filtered(
+            ticket_id=ticket_id,
+            run_type=run_type,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}

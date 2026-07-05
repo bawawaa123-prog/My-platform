@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.utils.datetime_utils import UTCDatetime
 
 
 class KnowledgeChunkRead(BaseModel):
@@ -10,8 +10,8 @@ class KnowledgeChunkRead(BaseModel):
     content: str
     metadata_json: dict
     embedding_id: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -28,8 +28,8 @@ class KnowledgeDocRead(BaseModel):
     uploaded_by: int
     error_message: str | None
     chunks_count: int = 0
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -37,6 +37,7 @@ import {
   type TicketRead,
   type TicketStatus,
 } from "../api/tickets";
+import { formatDateTime } from "../utils/date";
 
 type DisplayClassification = {
   category: TicketRead["category"];
@@ -53,17 +54,6 @@ type AgentOutputCard = {
   description: string;
   data: unknown;
 };
-
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return "Not available";
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
 
 function toLabel(value: string) {
   return value
@@ -121,7 +111,7 @@ function findAuditEntry(auditTrail: AgentAuditTrailItem[], agentName: string) {
   return auditTrail.find((item) => item.agent_name === agentName) ?? null;
 }
 
-function buildAgentCards(result: AIMultiAgentPendingReviewRead): AgentOutputCard[] {
+function buildAgentCards(result: AIMultiAgentPendingReviewRead | AIMultiAgentProcessRead): AgentOutputCard[] {
   return [
     {
       agentName: "SupervisorAgent",
@@ -316,10 +306,32 @@ export default function TicketDetailPage() {
   const [sendMessageError, setSendMessageError] = useState<string | null>(null);
   const [sendMessageSuccess, setSendMessageSuccess] = useState<string | null>(null);
 
-  const latestSuggestion = suggestions[0] ?? null;
+  const singleAgentSuggestions = useMemo(
+    () => suggestions.filter((s) => (s.source_workflow ?? "single_agent") === "single_agent"),
+    [suggestions],
+  );
+  const latestSingleAgentSuggestion = singleAgentSuggestions[0] ?? null;
+
+  const multiAgentFinalReviewedSuggestion = useMemo(() => {
+    if (multiAgentResumeResult?.reviewed_suggestion) {
+      return multiAgentResumeResult.reviewed_suggestion;
+    }
+    if (
+      latestAgentRun?.run_type === "multi_agent" &&
+      latestAgentRun?.status === "completed" &&
+      latestAgentRun?.output_json?.reviewed_suggestion
+    ) {
+      return latestAgentRun.output_json.reviewed_suggestion as AIReplyDraftRead;
+    }
+    return null;
+  }, [multiAgentResumeResult, latestAgentRun]);
+
   const agentCards = useMemo(
-    () => (multiAgentResult ? buildAgentCards(multiAgentResult) : []),
-    [multiAgentResult],
+    () => {
+      const source = multiAgentResult ?? multiAgentResumeResult;
+      return source ? buildAgentCards(source) : [];
+    },
+    [multiAgentResult, multiAgentResumeResult],
   );
   const displayedClassification = useMemo(() => {
     if (classification) {
@@ -396,8 +408,20 @@ export default function TicketDetailPage() {
 
       if (latestRun && isMultiAgentPendingReviewRead(latestRun.output_json)) {
         setMultiAgentResult(latestRun.output_json);
+        setMultiAgentResumeResult(null);
+      } else if (
+        latestRun &&
+        latestRun.run_type === "multi_agent" &&
+        latestRun.status === "completed"
+      ) {
+        const output = latestRun.output_json;
+        if (output && typeof output === "object" && "reviewed_suggestion" in output) {
+          setMultiAgentResumeResult(output as unknown as AIMultiAgentProcessRead);
+        }
+        setMultiAgentResult(null);
       } else if (!latestRun) {
         setMultiAgentResult(null);
+        setMultiAgentResumeResult(null);
       }
     } catch {
       if (!isMountedRef.current) {
@@ -475,15 +499,15 @@ export default function TicketDetailPage() {
   }, [ticketId]);
 
   useEffect(() => {
-    if (!latestSuggestion) {
+    if (!latestSingleAgentSuggestion) {
       setReviewDraftContent("");
       setReviewRejectReason("");
       return;
     }
 
-    setReviewDraftContent(latestSuggestion.final_content ?? latestSuggestion.suggested_content);
-    setReviewRejectReason(latestSuggestion.reject_reason ?? "");
-  }, [latestSuggestion?.id, latestSuggestion?.updated_at]);
+    setReviewDraftContent(latestSingleAgentSuggestion.final_content ?? latestSingleAgentSuggestion.suggested_content);
+    setReviewRejectReason(latestSingleAgentSuggestion.reject_reason ?? "");
+  }, [latestSingleAgentSuggestion?.id, latestSingleAgentSuggestion?.updated_at]);
 
   async function handleStatusChange(nextStatus: TicketStatus) {
     if (!ticket) {
@@ -559,34 +583,7 @@ export default function TicketDetailPage() {
   }
 
   async function handleApproveSuggestion() {
-    if (!latestSuggestion) {
-      return;
-    }
-
-    setIsSubmittingReview(true);
-    setAiActionErrorMessage(null);
-    setSuggestionsErrorMessage(null);
-    setReviewSuccessMessage(null);
-
-    try {
-      const reviewed = await approveSuggestion(latestSuggestion.id);
-      setSuggestions((current) => upsertSuggestion(current, reviewed));
-      setReviewSuccessMessage("AI draft approved and locked as the final reviewed reply.");
-      void loadMessages();
-    } catch (error: unknown) {
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status === 403) {
-        setAiActionErrorMessage("当前角色无审核权限。");
-      } else {
-        setAiActionErrorMessage(getApiErrorDetail(error, "Approve action failed. Please refresh and try again."));
-      }
-    } finally {
-      setIsSubmittingReview(false);
-    }
-  }
-
-  async function handleEditSuggestion() {
-    if (!latestSuggestion) {
+    if (!latestSingleAgentSuggestion) {
       return;
     }
 
@@ -602,7 +599,39 @@ export default function TicketDetailPage() {
     setReviewSuccessMessage(null);
 
     try {
-      const reviewed = await editSuggestion(latestSuggestion.id, { final_content: finalContent });
+      const reviewed = await approveSuggestion(latestSingleAgentSuggestion.id, { final_content: finalContent });
+      setSuggestions((current) => upsertSuggestion(current, reviewed));
+      setReviewSuccessMessage("AI draft approved and locked as the final reviewed reply.");
+    } catch (error: unknown) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 403) {
+        setAiActionErrorMessage("当前角色无审核权限。");
+      } else {
+        setAiActionErrorMessage(getApiErrorDetail(error, "Approve action failed. Please refresh and try again."));
+      }
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  }
+
+  async function handleEditSuggestion() {
+    if (!latestSingleAgentSuggestion) {
+      return;
+    }
+
+    const finalContent = reviewDraftContent.trim();
+    if (!finalContent) {
+      setAiActionErrorMessage("Edited final reply cannot be empty.");
+      return;
+    }
+
+    setIsSubmittingReview(true);
+    setAiActionErrorMessage(null);
+    setSuggestionsErrorMessage(null);
+    setReviewSuccessMessage(null);
+
+    try {
+      const reviewed = await editSuggestion(latestSingleAgentSuggestion.id, { final_content: finalContent });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft saved with human edits.");
       void loadMessages();
@@ -619,7 +648,7 @@ export default function TicketDetailPage() {
   }
 
   async function handleRejectSuggestion() {
-    if (!latestSuggestion) {
+    if (!latestSingleAgentSuggestion) {
       return;
     }
 
@@ -635,7 +664,7 @@ export default function TicketDetailPage() {
     setReviewSuccessMessage(null);
 
     try {
-      const reviewed = await rejectSuggestion(latestSuggestion.id, { reject_reason: rejectReason });
+      const reviewed = await rejectSuggestion(latestSingleAgentSuggestion.id, { reject_reason: rejectReason });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft rejected and the review reason has been recorded.");
     } catch (error: unknown) {
@@ -730,6 +759,12 @@ export default function TicketDetailPage() {
       return;
     }
 
+    const finalContent = multiAgentReviewDraftContent.trim();
+    if (!finalContent) {
+      setMultiAgentReviewError("Edited final reply cannot be empty.");
+      return;
+    }
+
     setIsSubmittingMultiAgentReview(true);
     setMultiAgentReviewError(null);
     setMultiAgentReviewSuccess(null);
@@ -738,10 +773,11 @@ export default function TicketDetailPage() {
       const result = await resumeMultiAgentProcess(ticket.id, {
         action: "approve",
         run_id: multiAgentResult.run_id,
+        final_content: finalContent,
       });
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply approved and finalized.");
-      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
     } catch (error: unknown) {
       setMultiAgentReviewError(getApiErrorDetail(error, "Approve action failed. Please try again."));
     } finally {
@@ -924,12 +960,116 @@ export default function TicketDetailPage() {
             </article>
           </section>
 
+          <article className="panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-tag">Final Review</p>
+                <h3>Final human-reviewed replies</h3>
+              </div>
+            </div>
+
+            {!latestSingleAgentSuggestion && !multiAgentFinalReviewedSuggestion ? (
+              <p className="panel-state">No final human-reviewed reply yet.</p>
+            ) : (
+              <div className="ai-panel-stack">
+                {latestSingleAgentSuggestion &&
+                latestSingleAgentSuggestion.status !== "draft" ? (
+                  <article className="suggestion-card">
+                    <div className="suggestion-card__header">
+                      <div>
+                        <strong>Source: Single-Agent</strong>
+                        <span>
+                          Reviewed at{" "}
+                          {formatDateTime(latestSingleAgentSuggestion.reviewed_at)}
+                        </span>
+                      </div>
+                      <span
+                        className={`badge badge--suggestion-status badge--${latestSingleAgentSuggestion.status}`}
+                      >
+                        {toLabel(latestSingleAgentSuggestion.status)}
+                      </span>
+                    </div>
+                    <div className="detail-stack detail-stack--compact">
+                      <div className="detail-row">
+                        <span>Reviewer</span>
+                        <strong>
+                          {latestSingleAgentSuggestion.reviewed_by
+                            ? `User #${latestSingleAgentSuggestion.reviewed_by}`
+                            : "Not available"}
+                        </strong>
+                      </div>
+                    </div>
+                    {latestSingleAgentSuggestion.final_content ? (
+                      <div className="review-outcome__block">
+                        <span>Final approved content</span>
+                        <p>{latestSingleAgentSuggestion.final_content}</p>
+                      </div>
+                    ) : null}
+                    {latestSingleAgentSuggestion.reject_reason ? (
+                      <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
+                        <span>Reject reason</span>
+                        <p>{latestSingleAgentSuggestion.reject_reason}</p>
+                      </div>
+                    ) : null}
+                  </article>
+                ) : null}
+
+                {multiAgentFinalReviewedSuggestion ? (
+                  <article className="suggestion-card">
+                    <div className="suggestion-card__header">
+                      <div>
+                        <strong>Source: Multi-Agent</strong>
+                        <span>
+                          Reviewed at{" "}
+                          {formatDateTime(multiAgentFinalReviewedSuggestion.reviewed_at)}
+                        </span>
+                      </div>
+                      <span
+                        className={`badge badge--suggestion-status badge--${multiAgentFinalReviewedSuggestion.status}`}
+                      >
+                        {toLabel(multiAgentFinalReviewedSuggestion.status)}
+                      </span>
+                    </div>
+                    <div className="detail-stack detail-stack--compact">
+                      <div className="detail-row">
+                        <span>Reviewer</span>
+                        <strong>
+                          {multiAgentFinalReviewedSuggestion.reviewed_by
+                            ? `User #${multiAgentFinalReviewedSuggestion.reviewed_by}`
+                            : "Not available"}
+                        </strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Run ID</span>
+                        <strong className="meta-card__value--mono">
+                          {latestAgentRun?.run_id ?? "N/A"}
+                        </strong>
+                      </div>
+                    </div>
+                    {multiAgentFinalReviewedSuggestion.final_content ? (
+                      <div className="review-outcome__block">
+                        <span>Final approved content</span>
+                        <p>{multiAgentFinalReviewedSuggestion.final_content}</p>
+                      </div>
+                    ) : null}
+                    {multiAgentFinalReviewedSuggestion.reject_reason ? (
+                      <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
+                        <span>Reject reason</span>
+                        <p>{multiAgentFinalReviewedSuggestion.reject_reason}</p>
+                      </div>
+                    ) : null}
+                  </article>
+                ) : null}
+              </div>
+            )}
+          </article>
+
           <section className="content-grid content-grid--detail">
             <article className="panel panel--feature">
               <div className="panel-heading">
                 <div>
-                  <p className="panel-tag">AI Reply</p>
-                  <h3>Draft and human review</h3>
+                  <p className="panel-tag">Single-Agent RAG</p>
+                  <h3>Single-agent reply draft</h3>
                 </div>
                 <button
                   type="button"
@@ -937,7 +1077,7 @@ export default function TicketDetailPage() {
                   onClick={handleGenerateReply}
                   disabled={isGeneratingReply}
                 >
-                  {isGeneratingReply ? "Generating..." : "Generate reply draft"}
+                  {isGeneratingReply ? "Generating..." : "Generate single-agent draft"}
                 </button>
               </div>
 
@@ -946,49 +1086,69 @@ export default function TicketDetailPage() {
               {loadingSuggestions ? <p className="panel-state">Loading AI suggestions...</p> : null}
               {suggestionsErrorMessage ? <p className="form-error">{suggestionsErrorMessage}</p> : null}
 
-              {!loadingSuggestions && !suggestionsErrorMessage && !latestSuggestion ? (
+              {!loadingSuggestions && !suggestionsErrorMessage && !latestSingleAgentSuggestion ? (
                 <p className="panel-state">
                   No AI reply draft exists for this ticket yet. Generate one to start the review
                   workflow.
                 </p>
               ) : null}
 
-              {!loadingSuggestions && latestSuggestion ? (
+              {!loadingSuggestions && latestSingleAgentSuggestion ? (
                 <div className="ai-panel-stack">
                   <article className="suggestion-card">
                     <div className="suggestion-card__header">
                       <div>
-                        <strong>Suggestion #{latestSuggestion.id}</strong>
+                        <strong>Suggestion #{latestSingleAgentSuggestion.id}</strong>
                         <span>
-                          Created {formatDateTime(latestSuggestion.created_at)} · Updated{" "}
-                          {formatDateTime(latestSuggestion.updated_at)}
+                          Created {formatDateTime(latestSingleAgentSuggestion.created_at)} · Updated{" "}
+                          {formatDateTime(latestSingleAgentSuggestion.updated_at)}
                         </span>
                       </div>
                       <div className="suggestion-card__badges">
                         <span
-                          className={`badge badge--suggestion-status badge--${latestSuggestion.status}`}
+                          className={`badge badge--suggestion-status badge--${latestSingleAgentSuggestion.status}`}
                         >
-                          {toLabel(latestSuggestion.status)}
+                          {toLabel(latestSingleAgentSuggestion.status)}
                         </span>
                         <span className="badge badge--score">
-                          Confidence {formatConfidence(latestSuggestion.confidence)}
+                          Confidence {formatConfidence(latestSingleAgentSuggestion.confidence)}
                         </span>
                       </div>
                     </div>
 
-                    <p className="suggestion-card__content">{latestSuggestion.suggested_content}</p>
+                    {latestSingleAgentSuggestion.status === "draft" ? (
+                      <>
+                        <p className="suggestion-card__label">Original AI draft</p>
+                        <p className="suggestion-card__content">{latestSingleAgentSuggestion.suggested_content}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="suggestion-card__label">Final reviewed reply</p>
+                        <p className="suggestion-card__content suggestion-card__content--final">
+                          {latestSingleAgentSuggestion.final_content ?? latestSingleAgentSuggestion.suggested_content}
+                        </p>
+                        {latestSingleAgentSuggestion.final_content && latestSingleAgentSuggestion.final_content !== latestSingleAgentSuggestion.suggested_content ? (
+                          <details className="json-disclosure" style={{ marginTop: "0.5rem" }}>
+                            <summary>View Original AI draft (for comparison)</summary>
+                            <p className="suggestion-card__content suggestion-card__content--original">
+                              {latestSingleAgentSuggestion.suggested_content}
+                            </p>
+                          </details>
+                        ) : null}
+                      </>
+                    )}
 
                     <div className="detail-stack detail-stack--compact">
                       <div className="detail-row">
                         <span>Reasoning summary</span>
-                        <strong>{latestSuggestion.reasoning_summary ?? "Not provided"}</strong>
+                        <strong>{latestSingleAgentSuggestion.reasoning_summary ?? "Not provided"}</strong>
                       </div>
                       <div className="detail-row">
                         <span>Review outcome</span>
                         <strong>
-                          {latestSuggestion.status === "draft"
+                          {latestSingleAgentSuggestion.status === "draft"
                             ? "Pending human review"
-                            : `Reviewed at ${formatDateTime(latestSuggestion.reviewed_at)}`}
+                            : `Reviewed at ${formatDateTime(latestSingleAgentSuggestion.reviewed_at)}`}
                         </strong>
                       </div>
                     </div>
@@ -1002,14 +1162,14 @@ export default function TicketDetailPage() {
                       </div>
                     </div>
 
-                    {latestSuggestion.sources_json.length === 0 ? (
+                    {latestSingleAgentSuggestion.sources_json.length === 0 ? (
                       <p className="panel-state">
                         No strong knowledge match was retrieved, so this draft should be reviewed
                         carefully before approval.
                       </p>
                     ) : (
                       <div className="source-list">
-                        {latestSuggestion.sources_json.map((source) => (
+                        {latestSingleAgentSuggestion.sources_json.map((source) => (
                           <article key={source.chunk_id} className="source-card">
                             <div className="source-card__header">
                               <div>
@@ -1040,7 +1200,7 @@ export default function TicketDetailPage() {
                       </div>
                     </div>
 
-                    {latestSuggestion.status === "draft" && canReview ? (
+                    {latestSingleAgentSuggestion.status === "draft" && canReview ? (
                       <div className="review-stack">
                         <label className="field">
                           <span>Editable final reply</span>
@@ -1068,7 +1228,7 @@ export default function TicketDetailPage() {
                             onClick={handleApproveSuggestion}
                             disabled={isSubmittingReview}
                           >
-                            {isSubmittingReview ? "Saving..." : "Approve as drafted"}
+                            {isSubmittingReview ? "Saving..." : "Approve current reply"}
                           </button>
                           <button
                             type="button"
@@ -1088,7 +1248,7 @@ export default function TicketDetailPage() {
                           </button>
                         </div>
                       </div>
-                    ) : latestSuggestion.status === "draft" && !canReview ? (
+                    ) : latestSingleAgentSuggestion.status === "draft" && !canReview ? (
                       <div className="review-stack">
                         <p>当前角色仅可查看 AI 建议，不能执行审核操作。</p>
                       </div>
@@ -1097,29 +1257,29 @@ export default function TicketDetailPage() {
                         <div className="detail-stack detail-stack--compact">
                           <div className="detail-row">
                             <span>Reviewed at</span>
-                            <strong>{formatDateTime(latestSuggestion.reviewed_at)}</strong>
+                            <strong>{formatDateTime(latestSingleAgentSuggestion.reviewed_at)}</strong>
                           </div>
                           <div className="detail-row">
                             <span>Reviewer</span>
                             <strong>
-                              {latestSuggestion.reviewed_by
-                                ? `User #${latestSuggestion.reviewed_by}`
+                              {latestSingleAgentSuggestion.reviewed_by
+                                ? `User #${latestSingleAgentSuggestion.reviewed_by}`
                                 : "Not available"}
                             </strong>
                           </div>
                         </div>
 
-                        {latestSuggestion.final_content ? (
+                        {latestSingleAgentSuggestion.final_content ? (
                           <div className="review-outcome__block">
                             <span>Final approved content</span>
-                            <p>{latestSuggestion.final_content}</p>
+                            <p>{latestSingleAgentSuggestion.final_content}</p>
                           </div>
                         ) : null}
 
-                        {latestSuggestion.reject_reason ? (
+                        {latestSingleAgentSuggestion.reject_reason ? (
                           <div className="review-outcome__block">
                             <span>Reject reason</span>
-                            <p>{latestSuggestion.reject_reason}</p>
+                            <p>{latestSingleAgentSuggestion.reject_reason}</p>
                           </div>
                         ) : null}
                       </div>
@@ -1216,30 +1376,46 @@ export default function TicketDetailPage() {
             {agentRunsErrorMessage ? <p className="form-error">{agentRunsErrorMessage}</p> : null}
             {loadingAgentRuns ? <p className="panel-state">Loading multi-agent runs...</p> : null}
 
-            {!loadingAgentRuns && !agentRunsErrorMessage && !multiAgentResult ? (
+            {!loadingAgentRuns && !agentRunsErrorMessage && !multiAgentResult && !multiAgentResumeResult ? (
               <p className="panel-state">
                 No multi-agent run has been recorded for this ticket yet. Start one to inspect the
                 execution trail and each agent output.
               </p>
             ) : null}
 
-            {multiAgentResult ? (
+            {(multiAgentResult || multiAgentResumeResult) ? (
               <div className="multi-agent-stack">
                 <div className="multi-agent-summary-grid">
                   <article className="meta-card">
                     <span className="meta-card__label">Workflow status</span>
-                    <strong>{toLabel(multiAgentResult.status)}</strong>
-                    <span>Pending node: {toLabel(multiAgentResult.pending_node)}</span>
+                    <strong>{toLabel(multiAgentResult?.status ?? "completed")}</strong>
+                    <span>
+                      {multiAgentResult
+                        ? `Pending node: ${toLabel(multiAgentResult.pending_node)}`
+                        : "Workflow finalized"}
+                    </span>
                   </article>
                   <article className="meta-card">
                     <span className="meta-card__label">Run ID</span>
-                    <strong className="meta-card__value--mono">{multiAgentResult.run_id}</strong>
-                    <span>Thread ID: {multiAgentResult.thread_id}</span>
+                    <strong className="meta-card__value--mono">
+                      {multiAgentResult?.run_id ?? latestAgentRun?.run_id ?? "N/A"}
+                    </strong>
+                    <span>
+                      {multiAgentResult
+                        ? `Thread ID: ${multiAgentResult.thread_id}`
+                        : `Status: ${toLabel(latestAgentRun?.status ?? "completed")}`}
+                    </span>
                   </article>
                   <article className="meta-card">
                     <span className="meta-card__label">Audit entries</span>
-                    <strong>{multiAgentResult.audit_trail.length}</strong>
-                    <span>Draft confidence: {formatConfidence(multiAgentResult.confidence)}</span>
+                    <strong>
+                      {(multiAgentResult ?? multiAgentResumeResult)?.audit_trail.length ?? 0}
+                    </strong>
+                    <span>
+                      {multiAgentResult
+                        ? `Draft confidence: ${formatConfidence(multiAgentResult.confidence)}`
+                        : "Workflow completed"}
+                    </span>
                   </article>
                   <article className="meta-card">
                     <span className="meta-card__label">Persisted run</span>
@@ -1254,7 +1430,8 @@ export default function TicketDetailPage() {
 
                 <div className="multi-agent-card-grid">
                   {agentCards.map((card) => {
-                    const auditEntry = findAuditEntry(multiAgentResult.audit_trail, card.agentName);
+                    const source = multiAgentResult ?? multiAgentResumeResult;
+                    const auditEntry = source ? findAuditEntry(source.audit_trail, card.agentName) : null;
                     const highlights = buildAgentHighlights(card.agentName, card.data);
 
                     return (
@@ -1306,7 +1483,7 @@ export default function TicketDetailPage() {
                   </div>
 
                   <div className="audit-trail-list">
-                    {multiAgentResult.audit_trail.map((entry, index) => (
+                    {((multiAgentResult ?? multiAgentResumeResult)?.audit_trail ?? []).map((entry, index) => (
                       <article key={`${entry.agent_name}-${entry.timestamp}-${index}`} className="audit-entry">
                         <div className="audit-entry__step">{index + 1}</div>
                         <div className="audit-entry__body">
@@ -1412,7 +1589,7 @@ export default function TicketDetailPage() {
                           disabled={isSubmittingMultiAgentReview}
                           onClick={handleMultiAgentApprove}
                         >
-                          {isSubmittingMultiAgentReview ? "Processing..." : "Approve as drafted"}
+                          {isSubmittingMultiAgentReview ? "Processing..." : "Approve current reply"}
                         </button>
                         <button
                           type="button"

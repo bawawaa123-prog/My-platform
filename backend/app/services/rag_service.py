@@ -106,11 +106,13 @@ class RagService:
         context: RetrievedContext,
         *,
         supplemental_context: str | None = None,
+        source_workflow: str = "single_agent",
     ) -> AIReplyDraftRead:
         return self._create_reply_suggestion(
             ticket,
             context,
             supplemental_context=supplemental_context,
+            source_workflow=source_workflow,
         )
 
     @staticmethod
@@ -133,6 +135,7 @@ class RagService:
         context: RetrievedContext,
         *,
         supplemental_context: str | None = None,
+        source_workflow: str = "single_agent",
     ) -> AIReplyDraftRead:
         # 无论是普通 RAG 还是 Multi-Agent ReplyAgent，
         # 最终都统一落成 AISuggestion，保证审核流只维护一套数据结构。
@@ -184,6 +187,7 @@ class RagService:
         suggestion = AISuggestion(
             ticket_id=ticket.id,
             suggestion_type="reply",
+            source_workflow=source_workflow,
             suggested_content=draft_reply,
             reasoning_summary=reasoning_summary,
             sources_json=sources,

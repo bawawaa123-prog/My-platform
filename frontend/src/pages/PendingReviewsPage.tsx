@@ -5,16 +5,10 @@ import {
   listPendingSuggestions,
   type PendingSuggestionRead,
 } from "../api/reviews";
+import { formatDateTime } from "../utils/date";
 
 
 const PAGE_SIZE = 10;
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
 
 function toLabel(value: string) {
   return value

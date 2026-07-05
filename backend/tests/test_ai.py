@@ -196,13 +196,13 @@ def test_multi_agent_start_returns_pending_review_and_interrupted_run_log(
 # ============================================================================
 
 
-def test_multi_agent_resume_approve_completes_run_and_appends_ticket_message(
+def test_multi_agent_resume_approve_completes_run_without_ticket_message(
     client: TestClient,
     auth_headers: dict[str, str],
     create_ticket,
 ) -> None:
-    """Verify that resume(approve) sets the run status to completed and appends
-    one agent-type ticket message whose content matches the draft suggestion."""
+    """Verify that resume(approve) sets the run status to completed and does NOT
+    append any agent-type ticket message to the conversation history."""
     ticket = create_ticket(
         title="Refund request after failed payment",
         content="Customer asks for help with a failed payment and refund.",
@@ -212,7 +212,6 @@ def test_multi_agent_resume_approve_completes_run_and_appends_ticket_message(
 
     pending = start_multi_agent(client, ticket["id"], auth_headers)
     run_id = pending["run_id"]
-    suggested_content = pending["draft_reply"]["suggested_content"]
 
     before_messages = list_ticket_messages(client, ticket["id"], auth_headers)
 
@@ -226,14 +225,9 @@ def test_multi_agent_resume_approve_completes_run_and_appends_ticket_message(
     assert final["review_decision"]["action"] == "approve"
     assert final["reviewed_suggestion"]["status"] == "approved"
 
-    # One new message should have been appended
+    # No new message should be appended — conversation history is for real communication
     after_messages = list_ticket_messages(client, ticket["id"], auth_headers)
-    assert len(after_messages) == len(before_messages) + 1
-    assert any(
-        message["sender_type"] == "agent"
-        and message["content"] == suggested_content
-        for message in after_messages
-    )
+    assert len(after_messages) == len(before_messages)
 
     # AgentRunLog should now be completed
     runs = list_agent_runs(client, ticket["id"], auth_headers)
@@ -248,14 +242,13 @@ def test_multi_agent_resume_approve_completes_run_and_appends_ticket_message(
 # ============================================================================
 
 
-def test_multi_agent_resume_edit_uses_final_content_for_ticket_message(
+def test_multi_agent_resume_edit_saves_final_content_without_ticket_message(
     client: TestClient,
     auth_headers: dict[str, str],
     create_ticket,
 ) -> None:
     """Verify that resume(edit) stores the human-edited final_content in the
-    reviewed suggestion, and that the appended ticket message uses that
-    final_content rather than the original suggested_content."""
+    reviewed suggestion, and does NOT append a ticket message."""
     ticket = create_ticket(
         title="Order status did not update",
         content="Customer paid but order remains pending.",
@@ -285,14 +278,10 @@ def test_multi_agent_resume_edit_uses_final_content_for_ticket_message(
     assert final["reviewed_suggestion"]["status"] == "edited"
     assert final["reviewed_suggestion"]["final_content"] == final_content
 
-    # The appended message must use the edited final_content
+    # No new message should be appended
     after_messages = list_ticket_messages(client, ticket["id"], auth_headers)
-    assert len(after_messages) == len(before_messages) + 1
-    assert any(
-        message["sender_type"] == "agent"
-        and message["content"] == final_content
-        for message in after_messages
-    )
+    assert len(after_messages) == len(before_messages)
+    assert not any(message["content"] == final_content for message in after_messages)
 
     # AgentRunLog must be completed
     runs = list_agent_runs(client, ticket["id"], auth_headers)

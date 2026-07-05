@@ -535,12 +535,12 @@ def create_draft_reply_suggestion(
     return suggestion
 
 
-def test_approve_suggestion_appends_ticket_message(
+def test_approve_suggestion_does_not_append_ticket_message(
     client: TestClient,
     agent_headers: dict[str, str],
     create_ticket: Callable[..., dict],
 ) -> None:
-    """Approve without custom content -> message content uses suggested_content."""
+    """Approve should NOT create a ticket message — Conversation history is for real communication only."""
     ticket = create_ticket()
     with next(get_db()) as db:
         suggestion = create_draft_reply_suggestion(
@@ -561,20 +561,16 @@ def test_approve_suggestion_appends_ticket_message(
     assert data["final_content"] == "AI approved response."
 
     after = list_ticket_messages(client, ticket["id"], agent_headers)
-    assert len(after) == len(before) + 1
-
-    assert any(
-        m["sender_type"] == "agent" and m["content"] == "AI approved response."
-        for m in after
-    )
+    assert len(after) == len(before)
+    assert not any(m["content"] == "AI approved response." for m in after)
 
 
-def test_approve_suggestion_with_custom_content_appends_custom_message(
+def test_approve_suggestion_with_custom_content_saves_final_content(
     client: TestClient,
     agent_headers: dict[str, str],
     create_ticket: Callable[..., dict],
 ) -> None:
-    """Approve with custom final_content -> message content uses final_content."""
+    """Approve with custom final_content -> final_content is saved; no ticket message created."""
     ticket = create_ticket()
     with next(get_db()) as db:
         suggestion = create_draft_reply_suggestion(
@@ -595,25 +591,18 @@ def test_approve_suggestion_with_custom_content_appends_custom_message(
     assert data["final_content"] == "Custom approved response."
 
     after = list_ticket_messages(client, ticket["id"], agent_headers)
-    assert len(after) == len(before) + 1
-
-    assert any(
-        m["content"] == "Custom approved response."
-        for m in after
-    )
-    # original suggested_content should NOT appear as a separate message
-    assert not any(
-        m["content"] == "Original AI response."
-        for m in after[len(before):]
-    )
+    assert len(after) == len(before)
+    # Neither final_content nor original suggested_content should appear as a message
+    assert not any(m["content"] == "Custom approved response." for m in after)
+    assert not any(m["content"] == "Original AI response." for m in after)
 
 
-def test_edit_suggestion_appends_ticket_message_with_final_content(
+def test_edit_suggestion_does_not_append_ticket_message(
     client: TestClient,
     agent_headers: dict[str, str],
     create_ticket: Callable[..., dict],
 ) -> None:
-    """Edit with final_content -> message content uses the edited content."""
+    """Edit with final_content should NOT create a ticket message."""
     ticket = create_ticket()
     with next(get_db()) as db:
         suggestion = create_draft_reply_suggestion(
@@ -634,12 +623,8 @@ def test_edit_suggestion_appends_ticket_message_with_final_content(
     assert data["final_content"] == "Edited human response."
 
     after = list_ticket_messages(client, ticket["id"], agent_headers)
-    assert len(after) == len(before) + 1
-
-    assert any(
-        m["sender_type"] == "agent" and m["content"] == "Edited human response."
-        for m in after
-    )
+    assert len(after) == len(before)
+    assert not any(m["content"] == "Edited human response." for m in after)
 
 
 def test_reject_suggestion_does_not_append_ticket_message(
@@ -674,18 +659,18 @@ def test_reject_suggestion_does_not_append_ticket_message(
     )
 
 
-def test_reviewed_suggestion_cannot_append_duplicate_message(
+def test_reviewed_suggestion_cannot_be_reviewed_again(
     client: TestClient,
     agent_headers: dict[str, str],
     create_ticket: Callable[..., dict],
 ) -> None:
-    """Re-reviewing an already-approved suggestion fails and does not duplicate the message."""
+    """Re-reviewing an already-approved suggestion fails with 400 and does not create any messages."""
     ticket = create_ticket()
     with next(get_db()) as db:
         suggestion = create_draft_reply_suggestion(
             db,
             ticket_id=ticket["id"],
-            suggested_content="Only one message should be created.",
+            suggested_content="Only one attempt per suggestion.",
         )
         suggestion_id = suggestion.id
 
@@ -711,20 +696,13 @@ def test_reviewed_suggestion_cannot_append_duplicate_message(
     after_second = list_ticket_messages(client, ticket["id"], agent_headers)
     assert len(after_second) == len(after_first)
 
-    # The message content should appear exactly once
-    matching = [
-        m for m in after_second
-        if m["content"] == "Only one message should be created."
-    ]
-    assert len(matching) == 1
 
-
-def test_viewer_cannot_append_ticket_message_by_reviewing(
+def test_viewer_review_does_not_affect_suggestion(
     client: TestClient,
     viewer_headers: dict[str, str],
     create_ticket: Callable[..., dict],
 ) -> None:
-    """Viewer gets 403 and no ticket message is created."""
+    """Viewer gets 403 and no ticket message or status change occurs."""
     ticket = create_ticket()
     with next(get_db()) as db:
         suggestion = create_draft_reply_suggestion(
