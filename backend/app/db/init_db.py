@@ -108,16 +108,25 @@ def sync_ai_suggestion_source_run_id() -> None:
         return
 
     existing_columns = {column["name"] for column in inspector.get_columns("ai_suggestions")}
-    if "source_run_id" in existing_columns:
-        return
 
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "ALTER TABLE ai_suggestions "
-                "ADD COLUMN source_run_id VARCHAR(100) NULL"
+    if "source_run_id" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE ai_suggestions "
+                    "ADD COLUMN source_run_id VARCHAR(100) NULL"
+                )
             )
-        )
+
+    existing_indexes = {index["name"] for index in inspector.get_indexes("ai_suggestions")}
+    if "ix_ai_suggestions_source_run_id" not in existing_indexes:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE INDEX ix_ai_suggestions_source_run_id "
+                    "ON ai_suggestions (source_run_id)"
+                )
+            )
 
 
 def sync_ticket_embedding_table() -> None:
