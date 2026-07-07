@@ -7,7 +7,6 @@ import {
   approveSuggestion,
   classifyTicketAI,
   editSuggestion,
-  generateTicketReply,
   listReviewedSuggestions,
   listTicketAgentRuns,
   listTicketAgentRunsPage,
@@ -23,6 +22,7 @@ import {
   type AIMultiAgentPendingReviewRead,
   type AIMultiAgentProcessRead,
   type AIReplyDraftRead,
+  type AIReplySource,
   type AIWorkflowPendingReviewRead,
   type AIWorkflowProcessRead,
   type MultiAgentKnowledgeResult,
@@ -143,6 +143,68 @@ function sourceWorkflowLabel(source: string): string {
 function runTypeLabel(runType: string): string {
   if (runType === "workflow") return "Single-Agent Workflow (Legacy)";
   return sourceWorkflowLabel(normalizeRunType(runType));
+}
+
+function RagSourcesPanel({ sources }: { sources: AIReplySource[] }) {
+  return (
+    <article className="panel panel--subtle">
+      <div className="panel-heading">
+        <div>
+          <p className="panel-tag">Sources</p>
+          <h3>RAG references</h3>
+        </div>
+      </div>
+
+      {sources.length === 0 ? (
+        <p className="panel-state">
+          No strong knowledge match was retrieved, so this draft should be reviewed carefully before approval.
+        </p>
+      ) : (
+        <div className="source-list">
+          {sources.map((source) => (
+            <article key={source.chunk_id} className="source-card">
+              <div className="source-card__header">
+                <div>
+                  <strong>Document #{source.doc_id}</strong>
+                  <span>Chunk {source.chunk_index} · ID {source.chunk_id}</span>
+                </div>
+                <span className="badge badge--score">
+                  Score {source.score.toFixed(3)}
+                </span>
+              </div>
+              <p>{source.content_preview}</p>
+              <Link to={`/knowledge/${source.doc_id}`} className="ghost-link">
+                View knowledge document
+              </Link>
+            </article>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function getReviewTime(s: AIReplyDraftRead): string {
+  return s.reviewed_at ?? s.updated_at ?? s.created_at;
+}
+
+function isFinalReviewVisible(s: AIReplyDraftRead): boolean {
+  return s.status === "approved" || s.status === "edited";
+}
+
+function isSingleAgentReview(s: AIReplyDraftRead): boolean {
+  const source = normalizeSourceWorkflow(s.source_workflow);
+  return source === "single_agent_rag" || source === "single_agent_workflow";
+}
+
+function isMultiAgentReview(s: AIReplyDraftRead): boolean {
+  return normalizeSourceWorkflow(s.source_workflow) === "multi_agent";
+}
+
+function pickLatestReview(items: AIReplyDraftRead[]): AIReplyDraftRead | null {
+  return [...items]
+    .filter(isFinalReviewVisible)
+    .sort((a, b) => getReviewTime(b).localeCompare(getReviewTime(a)) || b.id - a.id)[0] ?? null;
 }
 
 function buildAgentCards(result: AIMultiAgentPendingReviewRead | AIMultiAgentProcessRead): AgentOutputCard[] {
@@ -362,6 +424,8 @@ export default function TicketDetailPage() {
   const [agentRunHistoryLoading, setAgentRunHistoryLoading] = useState(false);
   const [agentRunHistoryError, setAgentRunHistoryError] = useState<string | null>(null);
   const [expandedAgentRunId, setExpandedAgentRunId] = useState<string | null>(null);
+  const [isSingleAgentPanelExpanded, setIsSingleAgentPanelExpanded] = useState(true);
+  const [isMultiAgentPanelExpanded, setIsMultiAgentPanelExpanded] = useState(true);
 
   const singleAgentRagSuggestions = useMemo(
     () => suggestions.filter((s) => normalizeSourceWorkflow(s.source_workflow) === "single_agent_rag"),
@@ -407,32 +471,68 @@ export default function TicketDetailPage() {
     return fromDb ?? null;
   }, [singleAgentResumeResult, reviewedSuggestions]);
 
-  // Build the consolidated Final Review list from all reviewed suggestions
-  const allFinalReviews = useMemo(() => {
+  // Build the consolidated Final Review slots: at most two — latest SA + latest MA
+  const finalReviewCandidates = useMemo(() => {
     const map = new Map<number, AIReplyDraftRead>();
-    // Start with DB reviewed suggestions
+
     for (const s of reviewedSuggestions) {
       map.set(s.id, s);
     }
-    // Merge in resume results if not already present
+
     if (singleAgentResumeResult?.reviewed_suggestion) {
-      const rs = singleAgentResumeResult.reviewed_suggestion;
-      if (!map.has(rs.id)) {
-        map.set(rs.id, rs);
-      }
+      const s = singleAgentResumeResult.reviewed_suggestion;
+      map.set(s.id, s);
     }
+
     if (multiAgentResumeResult?.reviewed_suggestion) {
-      const rs = multiAgentResumeResult.reviewed_suggestion;
-      if (!map.has(rs.id)) {
-        map.set(rs.id, rs);
+      const s = multiAgentResumeResult.reviewed_suggestion;
+      map.set(s.id, s);
+    }
+
+    return Array.from(map.values());
+  }, [reviewedSuggestions, singleAgentResumeResult, multiAgentResumeResult]);
+
+  const latestSingleAgentFinalReview = useMemo(
+    () => pickLatestReview(finalReviewCandidates.filter(isSingleAgentReview)),
+    [finalReviewCandidates],
+  );
+
+  const latestMultiAgentFinalReview = useMemo(
+    () => pickLatestReview(finalReviewCandidates.filter(isMultiAgentReview)),
+    [finalReviewCandidates],
+  );
+
+  const finalReviewSlots = useMemo(
+    () => [
+      latestSingleAgentFinalReview
+        ? { key: "single-agent", label: "Latest Single-Agent result", review: latestSingleAgentFinalReview }
+        : null,
+      latestMultiAgentFinalReview
+        ? { key: "multi-agent", label: "Latest Multi-Agent result", review: latestMultiAgentFinalReview }
+        : null,
+    ].filter(Boolean) as Array<{ key: string; label: string; review: AIReplyDraftRead }>,
+    [latestSingleAgentFinalReview, latestMultiAgentFinalReview],
+  );
+
+  const singleAgentWorkflowSources = useMemo((): AIReplySource[] => {
+    // Priority: reviewed_suggestion.sources_json > output_json.reviewed_suggestion.sources_json > output_json.reply_suggestion.sources_json
+    if (singleAgentResumeResult?.reviewed_suggestion?.sources_json?.length) {
+      return singleAgentResumeResult.reviewed_suggestion.sources_json;
+    }
+    const run = latestSingleAgentWorkflowRun;
+    if (run?.output_json) {
+      const output = run.output_json as Record<string, unknown>;
+      const reviewedSuggestion = output.reviewed_suggestion as Record<string, unknown> | undefined;
+      if (reviewedSuggestion?.sources_json) {
+        return reviewedSuggestion.sources_json as AIReplySource[];
+      }
+      const replySuggestion = output.reply_suggestion as Record<string, unknown> | undefined;
+      if (replySuggestion?.sources_json) {
+        return replySuggestion.sources_json as AIReplySource[];
       }
     }
-    return Array.from(map.values()).sort((a, b) => {
-      const aDate = a.reviewed_at ?? a.updated_at;
-      const bDate = b.reviewed_at ?? b.updated_at;
-      return bDate.localeCompare(aDate);
-    });
-  }, [reviewedSuggestions, singleAgentResumeResult, multiAgentResumeResult]);
+    return [];
+  }, [singleAgentResumeResult, latestSingleAgentWorkflowRun]);
 
   const agentCards = useMemo(
     () => {
@@ -893,6 +993,7 @@ export default function TicketDetailPage() {
       const reviewed = await approveSuggestion(latestSingleAgentSuggestion.id, { final_content: finalContent });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft approved and locked as the final reviewed reply.");
+      await Promise.all([loadSuggestions(ticketId), loadReviewedSuggestions(ticketId), loadAgentRuns(ticketId)]);
     } catch (error: unknown) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -926,6 +1027,7 @@ export default function TicketDetailPage() {
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft saved with human edits.");
       void loadMessages();
+      void loadReviewedSuggestions(ticketId);
     } catch (error: unknown) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -958,6 +1060,7 @@ export default function TicketDetailPage() {
       const reviewed = await rejectSuggestion(latestSingleAgentSuggestion.id, { reject_reason: rejectReason });
       setSuggestions((current) => upsertSuggestion(current, reviewed));
       setReviewSuccessMessage("AI draft rejected and the review reason has been recorded.");
+      await Promise.all([loadSuggestions(ticketId), loadReviewedSuggestions(ticketId), loadAgentRuns(ticketId)]);
     } catch (error: unknown) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -1259,58 +1362,62 @@ export default function TicketDetailPage() {
               </div>
             </div>
 
-            {!allFinalReviews.length ? (
+            {!finalReviewSlots.length ? (
               <p className="panel-state">No final human-reviewed reply yet.</p>
             ) : (
               <div className="ai-panel-stack">
-                {allFinalReviews.map((review) => (
-                  <article key={review.id} className="suggestion-card">
+                {finalReviewSlots.map((slot) => (
+                  <article key={slot.key} className="suggestion-card">
                     <div className="suggestion-card__header">
                       <div>
-                        <strong>Source: {sourceWorkflowLabel(normalizeSourceWorkflow(review.source_workflow))}</strong>
+                        <strong>{slot.label}</strong>
                         <span>
                           Reviewed at{" "}
-                          {formatDateTime(review.reviewed_at)}
+                          {formatDateTime(slot.review.reviewed_at)}
                         </span>
                       </div>
                       <span
-                        className={`badge badge--suggestion-status badge--${review.status}`}
+                        className={`badge badge--suggestion-status badge--${slot.review.status}`}
                       >
-                        {toLabel(review.status)}
+                        {toLabel(slot.review.status)}
                       </span>
                     </div>
                     <div className="detail-stack detail-stack--compact">
                       <div className="detail-row">
+                        <span>Source</span>
+                        <strong>{sourceWorkflowLabel(normalizeSourceWorkflow(slot.review.source_workflow))}</strong>
+                      </div>
+                      <div className="detail-row">
                         <span>Reviewer</span>
                         <strong>
-                          {review.reviewed_by
-                            ? `User #${review.reviewed_by}`
+                          {slot.review.reviewed_by
+                            ? `User #${slot.review.reviewed_by}`
                             : "Not available"}
                         </strong>
                       </div>
                       <div className="detail-row">
                         <span>Run ID</span>
                         <strong className="meta-card__value--mono">
-                          {review.source_run_id ?? "N/A"}
+                          {slot.review.source_run_id ?? "N/A"}
                         </strong>
                       </div>
                     </div>
-                    {review.final_content ? (
+                    {slot.review.final_content ? (
                       <div className="review-outcome__block">
                         <span>Final approved content</span>
-                        <p>{review.final_content}</p>
+                        <p>{slot.review.final_content}</p>
                       </div>
                     ) : null}
-                    {review.reject_reason ? (
+                    {slot.review.reject_reason ? (
                       <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
                         <span>Reject reason</span>
-                        <p>{review.reject_reason}</p>
+                        <p>{slot.review.reject_reason}</p>
                       </div>
                     ) : null}
                     <details className="json-disclosure" style={{ marginTop: "0.5rem" }}>
                       <summary>View original AI draft</summary>
                       <p className="suggestion-card__content suggestion-card__content--original">
-                        {review.suggested_content}
+                        {slot.review.suggested_content}
                       </p>
                     </details>
                   </article>
@@ -1326,16 +1433,30 @@ export default function TicketDetailPage() {
                   <p className="panel-tag">Single-Agent RAG</p>
                   <h3>Single-agent reply draft</h3>
                 </div>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={handleStartSingleAgentWorkflow}
-                  disabled={isStartingSingleAgent}
-                >
-                  {isStartingSingleAgent ? "Starting..." : "Generate single-agent draft"}
-                </button>
+
+                <div className="panel-heading__actions">
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    aria-expanded={isSingleAgentPanelExpanded}
+                    onClick={() => setIsSingleAgentPanelExpanded((value) => !value)}
+                  >
+                    {isSingleAgentPanelExpanded ? "Collapse" : "Expand"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={handleStartSingleAgentWorkflow}
+                    disabled={isStartingSingleAgent}
+                  >
+                    {isStartingSingleAgent ? "Starting..." : "Generate single-agent draft"}
+                  </button>
+                </div>
               </div>
 
+              {isSingleAgentPanelExpanded ? (
+                <>
               {aiActionErrorMessage ? <p className="form-error">{aiActionErrorMessage}</p> : null}
               {loadingSuggestions ? <p className="panel-state">Loading AI suggestions...</p> : null}
               {suggestionsErrorMessage ? <p className="form-error">{suggestionsErrorMessage}</p> : null}
@@ -1400,44 +1521,7 @@ export default function TicketDetailPage() {
                     </div>
                   </article>
 
-                  {/* Sources panel */}
-                  <article className="panel panel--subtle">
-                    <div className="panel-heading">
-                      <div>
-                        <p className="panel-tag">Sources</p>
-                        <h3>RAG references</h3>
-                      </div>
-                    </div>
-
-                    {singleAgentResult.sources.length === 0 ? (
-                      <p className="panel-state">
-                        No strong knowledge match was retrieved, so this draft should be reviewed
-                        carefully before approval.
-                      </p>
-                    ) : (
-                      <div className="source-list">
-                        {singleAgentResult.sources.map((source) => (
-                          <article key={source.chunk_id} className="source-card">
-                            <div className="source-card__header">
-                              <div>
-                                <strong>Document #{source.doc_id}</strong>
-                                <span>
-                                  Chunk {source.chunk_index} · ID {source.chunk_id}
-                                </span>
-                              </div>
-                              <span className="badge badge--score">
-                                Score {source.score.toFixed(3)}
-                              </span>
-                            </div>
-                            <p>{source.content_preview}</p>
-                            <Link to={`/knowledge/${source.doc_id}`} className="ghost-link">
-                              View knowledge document
-                            </Link>
-                          </article>
-                        ))}
-                      </div>
-                    )}
-                  </article>
+                  <RagSourcesPanel sources={singleAgentResult.sources} />
 
                   {/* Review form */}
                   <article className="panel panel--subtle">
@@ -1559,6 +1643,8 @@ export default function TicketDetailPage() {
                         {singleAgentReviewSuccess}
                       </p>
                     ) : null}
+
+                    <RagSourcesPanel sources={singleAgentWorkflowSources} />
                   </article>
                 </div>
               ) : null}
@@ -1625,43 +1711,7 @@ export default function TicketDetailPage() {
                     </div>
                   </article>
 
-                  <article className="panel panel--subtle">
-                    <div className="panel-heading">
-                      <div>
-                        <p className="panel-tag">Sources</p>
-                        <h3>RAG references</h3>
-                      </div>
-                    </div>
-
-                    {latestSingleAgentSuggestion.sources_json.length === 0 ? (
-                      <p className="panel-state">
-                        No strong knowledge match was retrieved, so this draft should be reviewed
-                        carefully before approval.
-                      </p>
-                    ) : (
-                      <div className="source-list">
-                        {latestSingleAgentSuggestion.sources_json.map((source) => (
-                          <article key={source.chunk_id} className="source-card">
-                            <div className="source-card__header">
-                              <div>
-                                <strong>Document #{source.doc_id}</strong>
-                                <span>
-                                  Chunk {source.chunk_index} · ID {source.chunk_id}
-                                </span>
-                              </div>
-                              <span className="badge badge--score">
-                                Score {source.score.toFixed(3)}
-                              </span>
-                            </div>
-                            <p>{source.content_preview}</p>
-                            <Link to={`/knowledge/${source.doc_id}`} className="ghost-link">
-                              View knowledge document
-                            </Link>
-                          </article>
-                        ))}
-                      </div>
-                    )}
-                  </article>
+                  <RagSourcesPanel sources={latestSingleAgentSuggestion.sources_json} />
 
                   <article className="panel panel--subtle">
                     <div className="panel-heading">
@@ -1758,6 +1808,11 @@ export default function TicketDetailPage() {
                   </article>
                 </div>
               ) : null}
+                </> ) : (
+                  <p className="panel-state panel-state--compact">
+                    Single-agent details are collapsed.
+                  </p>
+                )}
             </article>
 
             <article className="panel">
@@ -1828,15 +1883,28 @@ export default function TicketDetailPage() {
                 <p className="panel-tag">AI Agent Timeline</p>
                 <h3>Multi-agent execution process</h3>
               </div>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={handleRunMultiAgent}
-                disabled={isRunningMultiAgent}
-              >
-                {isRunningMultiAgent ? "Running..." : "Run multi-agent analysis"}
-              </button>
+              <div className="panel-heading__actions">
+                <button
+                  type="button"
+                  className="ghost-button"
+                  aria-expanded={isMultiAgentPanelExpanded}
+                  onClick={() => setIsMultiAgentPanelExpanded((value) => !value)}
+                >
+                  {isMultiAgentPanelExpanded ? "Collapse" : "Expand"}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={handleRunMultiAgent}
+                  disabled={isRunningMultiAgent}
+                >
+                  {isRunningMultiAgent ? "Running..." : "Run multi-agent analysis"}
+                </button>
+              </div>
             </div>
+
+            {isMultiAgentPanelExpanded ? (
+            <>
 
             <p className="helper-copy">
               This runs the fixed-sequence workflow: Supervisor, Triage, Knowledge, Similar Case,
@@ -2084,6 +2152,12 @@ export default function TicketDetailPage() {
                 )}
               </div>
             ) : null}
+              </>
+            ) : (
+              <p className="panel-state panel-state--compact">
+                Multi-agent details are collapsed.
+              </p>
+            )}
           </article>
 
           <article className="panel">
@@ -2189,9 +2263,8 @@ export default function TicketDetailPage() {
                   onChange={(event_) => setAgentRunTypeFilter(event_.target.value)}
                 >
                   <option value="all">All</option>
-                  <option value="single_agent_rag">Single-Agent RAG</option>
-                  <option value="multi_agent">Multi-Agent</option>
                   <option value="single_agent_workflow">Single-Agent Workflow</option>
+                  <option value="multi_agent">Multi-Agent</option>
                 </select>
               </label>
               <label className="field" style={{ flex: 1 }}>

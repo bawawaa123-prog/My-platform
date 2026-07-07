@@ -1609,3 +1609,25 @@ a {
   overflow: auto;
   white-space: pre;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Collapse/Expand panel utilities                                    */
+/* ------------------------------------------------------------------ */
+
+.panel-heading__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.panel-state--compact {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 768px) {
+  .panel-heading__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
