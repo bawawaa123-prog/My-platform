@@ -8,6 +8,7 @@ import {
   classifyTicketAI,
   editSuggestion,
   generateTicketReply,
+  listReviewedSuggestions,
   listTicketAgentRuns,
   listTicketAgentRunsPage,
   listTicketSuggestions,
@@ -115,6 +116,33 @@ function formatJson(value: unknown) {
 
 function findAuditEntry(auditTrail: AgentAuditTrailItem[], agentName: string) {
   return auditTrail.find((item) => item.agent_name === agentName) ?? null;
+}
+
+function normalizeSourceWorkflow(source?: string | null): string {
+  if (!source || source === "single_agent") return "single_agent_rag";
+  if (source === "workflow") return "single_agent_workflow";
+  return source;
+}
+
+function normalizeRunType(runType?: string | null): string {
+  if (!runType) return "";
+  if (runType === "workflow") return "single_agent_workflow";
+  return runType;
+}
+
+function sourceWorkflowLabel(source: string): string {
+  switch (source) {
+    case "single_agent_rag": return "Single-Agent RAG";
+    case "single_agent_workflow": return "Single-Agent Workflow";
+    case "multi_agent": return "Multi-Agent";
+    case "manual": return "Manual";
+    default: return toLabel(source);
+  }
+}
+
+function runTypeLabel(runType: string): string {
+  if (runType === "workflow") return "Single-Agent Workflow (Legacy)";
+  return sourceWorkflowLabel(normalizeRunType(runType));
 }
 
 function buildAgentCards(result: AIMultiAgentPendingReviewRead | AIMultiAgentProcessRead): AgentOutputCard[] {
@@ -277,8 +305,11 @@ export default function TicketDetailPage() {
   const [messages, setMessages] = useState<TicketMessageRead[]>([]);
   const [classification, setClassification] = useState<TicketClassification | null>(null);
   const [suggestions, setSuggestions] = useState<AIReplyDraftRead[]>([]);
+  const [reviewedSuggestions, setReviewedSuggestions] = useState<AIReplyDraftRead[]>([]);
   const [multiAgentResult, setMultiAgentResult] = useState<AIMultiAgentPendingReviewRead | null>(null);
-  const [latestAgentRun, setLatestAgentRun] = useState<AgentRunLogRead | null>(null);
+  const [latestSingleAgentRagRun, setLatestSingleAgentRagRun] = useState<AgentRunLogRead | null>(null);
+  const [latestSingleAgentWorkflowRun, setLatestSingleAgentWorkflowRun] = useState<AgentRunLogRead | null>(null);
+  const [latestMultiAgentRun, setLatestMultiAgentRun] = useState<AgentRunLogRead | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [loadingSuggestions, setLoadingSuggestions] = useState(true);
@@ -332,32 +363,76 @@ export default function TicketDetailPage() {
   const [agentRunHistoryError, setAgentRunHistoryError] = useState<string | null>(null);
   const [expandedAgentRunId, setExpandedAgentRunId] = useState<string | null>(null);
 
-  const singleAgentSuggestions = useMemo(
-    () => suggestions.filter((s) => (s.source_workflow ?? "single_agent") === "single_agent"),
+  const singleAgentRagSuggestions = useMemo(
+    () => suggestions.filter((s) => normalizeSourceWorkflow(s.source_workflow) === "single_agent_rag"),
     [suggestions],
   );
-  const latestSingleAgentSuggestion = singleAgentSuggestions[0] ?? null;
+  const singleAgentWorkflowSuggestions = useMemo(
+    () => suggestions.filter((s) => normalizeSourceWorkflow(s.source_workflow) === "single_agent_workflow"),
+    [suggestions],
+  );
+  const multiAgentSuggestions = useMemo(
+    () => suggestions.filter((s) => normalizeSourceWorkflow(s.source_workflow) === "multi_agent"),
+    [suggestions],
+  );
+  const latestSingleAgentRagSuggestion = singleAgentRagSuggestions[0] ?? null;
+  const latestSingleAgentWorkflowSuggestion = singleAgentWorkflowSuggestions[0] ?? null;
+  const latestMultiAgentSuggestion = multiAgentSuggestions[0] ?? null;
+
+  // For backward compat: the "latestSingleAgentSuggestion" used in old review UI
+  const latestSingleAgentSuggestion = latestSingleAgentRagSuggestion;
 
   const multiAgentFinalReviewedSuggestion = useMemo(() => {
     if (multiAgentResumeResult?.reviewed_suggestion) {
       return multiAgentResumeResult.reviewed_suggestion;
     }
-    if (
-      latestAgentRun?.run_type === "multi_agent" &&
-      latestAgentRun?.status === "completed" &&
-      latestAgentRun?.output_json?.reviewed_suggestion
-    ) {
-      return latestAgentRun.output_json.reviewed_suggestion as AIReplyDraftRead;
+    if (latestMultiAgentRun?.status === "completed" && latestMultiAgentRun?.output_json?.reviewed_suggestion) {
+      return latestMultiAgentRun.output_json.reviewed_suggestion as AIReplyDraftRead;
     }
-    return null;
-  }, [multiAgentResumeResult, latestAgentRun]);
+    // Fallback to reviewed suggestions from DB
+    const fromDb = reviewedSuggestions.find(
+      (s) => normalizeSourceWorkflow(s.source_workflow) === "multi_agent" && s.status !== "rejected",
+    );
+    return fromDb ?? null;
+  }, [multiAgentResumeResult, latestMultiAgentRun, reviewedSuggestions]);
 
   const singleAgentFinalReviewedSuggestion = useMemo(() => {
     if (singleAgentResumeResult?.reviewed_suggestion) {
       return singleAgentResumeResult.reviewed_suggestion;
     }
-    return null;
-  }, [singleAgentResumeResult]);
+    // Fallback to DB reviewed suggestions
+    const fromDb = reviewedSuggestions.find(
+      (s) => normalizeSourceWorkflow(s.source_workflow) === "single_agent_workflow" && s.status !== "rejected",
+    );
+    return fromDb ?? null;
+  }, [singleAgentResumeResult, reviewedSuggestions]);
+
+  // Build the consolidated Final Review list from all reviewed suggestions
+  const allFinalReviews = useMemo(() => {
+    const map = new Map<number, AIReplyDraftRead>();
+    // Start with DB reviewed suggestions
+    for (const s of reviewedSuggestions) {
+      map.set(s.id, s);
+    }
+    // Merge in resume results if not already present
+    if (singleAgentResumeResult?.reviewed_suggestion) {
+      const rs = singleAgentResumeResult.reviewed_suggestion;
+      if (!map.has(rs.id)) {
+        map.set(rs.id, rs);
+      }
+    }
+    if (multiAgentResumeResult?.reviewed_suggestion) {
+      const rs = multiAgentResumeResult.reviewed_suggestion;
+      if (!map.has(rs.id)) {
+        map.set(rs.id, rs);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      const aDate = a.reviewed_at ?? a.updated_at;
+      const bDate = b.reviewed_at ?? b.updated_at;
+      return bDate.localeCompare(aDate);
+    });
+  }, [reviewedSuggestions, singleAgentResumeResult, multiAgentResumeResult]);
 
   const agentCards = useMemo(
     () => {
@@ -426,6 +501,18 @@ export default function TicketDetailPage() {
     }
   }
 
+  async function loadReviewedSuggestions(currentTicketId: number) {
+    try {
+      const data = await listReviewedSuggestions(currentTicketId);
+      if (!isMountedRef.current) {
+        return;
+      }
+      setReviewedSuggestions(data);
+    } catch {
+      // Non-critical: Final Review will fall back to other sources.
+    }
+  }
+
   async function loadAgentRuns(currentTicketId: number) {
     setLoadingAgentRuns(true);
     setAgentRunsErrorMessage(null);
@@ -436,36 +523,41 @@ export default function TicketDetailPage() {
         return;
       }
 
-      const latestRun = runData[0] ?? null;
-      setLatestAgentRun(latestRun);
+      // Find the latest run of each type independently
+      const latestRag = runData.find((r) => normalizeRunType(r.run_type) === "single_agent_rag") ?? null;
+      const latestWorkflow = runData.find((r) => normalizeRunType(r.run_type) === "single_agent_workflow") ?? null;
+      const latestMulti = runData.find((r) => normalizeRunType(r.run_type) === "multi_agent") ?? null;
 
-      // Reset all workflow states first
-      setMultiAgentResult(null);
-      setMultiAgentResumeResult(null);
-      setSingleAgentResult(null);
-      setSingleAgentResumeResult(null);
+      setLatestSingleAgentRagRun(latestRag);
+      setLatestSingleAgentWorkflowRun(latestWorkflow);
+      setLatestMultiAgentRun(latestMulti);
 
-      if (latestRun) {
-        if (latestRun.run_type === "multi_agent") {
-          if (latestRun.status === "interrupted" && isMultiAgentPendingReviewRead(latestRun.output_json)) {
-            setMultiAgentResult(latestRun.output_json);
-          } else if (latestRun.status === "completed") {
-            const output = latestRun.output_json;
-            if (output && typeof output === "object" && "reviewed_suggestion" in output) {
-              setMultiAgentResumeResult(output as unknown as AIMultiAgentProcessRead);
-            }
+      // Restore single-agent workflow state only from its own run
+      if (latestWorkflow) {
+        if (latestWorkflow.status === "interrupted") {
+          const output = latestWorkflow.output_json;
+          if (output && typeof output === "object" && "run_id" in output) {
+            setSingleAgentResult(output as unknown as AIWorkflowPendingReviewRead);
           }
-        } else if (latestRun.run_type === "workflow") {
-          if (latestRun.status === "interrupted") {
-            const output = latestRun.output_json;
-            if (output && typeof output === "object" && "run_id" in output) {
-              setSingleAgentResult(output as unknown as AIWorkflowPendingReviewRead);
-            }
-          } else if (latestRun.status === "completed") {
-            const output = latestRun.output_json;
-            if (output && typeof output === "object" && "reviewed_suggestion" in output) {
-              setSingleAgentResumeResult(output as unknown as AIWorkflowProcessRead);
-            }
+        } else if (latestWorkflow.status === "completed") {
+          // Clear pending if completed
+          setSingleAgentResult(null);
+          const output = latestWorkflow.output_json;
+          if (output && typeof output === "object" && "reviewed_suggestion" in output) {
+            setSingleAgentResumeResult(output as unknown as AIWorkflowProcessRead);
+          }
+        }
+      }
+
+      // Restore multi-agent state only from its own run
+      if (latestMulti) {
+        if (latestMulti.status === "interrupted" && isMultiAgentPendingReviewRead(latestMulti.output_json)) {
+          setMultiAgentResult(latestMulti.output_json);
+        } else if (latestMulti.status === "completed") {
+          setMultiAgentResult(null);
+          const output = latestMulti.output_json;
+          if (output && typeof output === "object" && "reviewed_suggestion" in output) {
+            setMultiAgentResumeResult(output as unknown as AIMultiAgentProcessRead);
           }
         }
       }
@@ -545,7 +637,9 @@ export default function TicketDetailPage() {
       setMultiAgentResumeResult(null);
       setSingleAgentResult(null);
       setSingleAgentResumeResult(null);
-      setLatestAgentRun(null);
+      setLatestSingleAgentRagRun(null);
+      setLatestSingleAgentWorkflowRun(null);
+      setLatestMultiAgentRun(null);
 
       try {
         const [ticketData, messageData] = await Promise.all([
@@ -559,7 +653,7 @@ export default function TicketDetailPage() {
 
         setTicket(ticketData);
         setMessages(messageData);
-        void Promise.all([loadSuggestions(ticketId), loadAgentRuns(ticketId)]);
+        void Promise.all([loadSuggestions(ticketId), loadAgentRuns(ticketId), loadReviewedSuggestions(ticketId)]);
       } catch {
         if (!isMountedRef.current) {
           return;
@@ -708,7 +802,7 @@ export default function TicketDetailPage() {
       });
       setSingleAgentResumeResult(result);
       setSingleAgentReviewSuccess("Single-agent draft approved and finalized.");
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setSingleAgentReviewError(getApiErrorDetail(error, "Approve action failed. Please try again."));
     } finally {
@@ -739,7 +833,7 @@ export default function TicketDetailPage() {
       });
       setSingleAgentResumeResult(result);
       setSingleAgentReviewSuccess("Single-agent draft saved with human edits.");
-      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setSingleAgentReviewError(getApiErrorDetail(error, "Edit action failed. Please try again."));
     } finally {
@@ -770,7 +864,7 @@ export default function TicketDetailPage() {
       });
       setSingleAgentResumeResult(result);
       setSingleAgentReviewSuccess("Single-agent draft rejected.");
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setSingleAgentReviewError(getApiErrorDetail(error, "Reject action failed. Please try again."));
     } finally {
@@ -943,7 +1037,7 @@ export default function TicketDetailPage() {
         "Multi-agent analysis completed and paused at human review. The latest agent outputs are shown below.",
       );
 
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setAgentRunsErrorMessage(getApiErrorDetail(error, "Multi-agent analysis failed. Please try again."));
     } finally {
@@ -974,7 +1068,7 @@ export default function TicketDetailPage() {
       });
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply approved and finalized.");
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setMultiAgentReviewError(getApiErrorDetail(error, "Approve action failed. Please try again."));
     } finally {
@@ -1005,7 +1099,7 @@ export default function TicketDetailPage() {
       });
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply saved with human edits.");
-      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadMessages(), loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setMultiAgentReviewError(getApiErrorDetail(error, "Edit action failed. Please try again."));
     } finally {
@@ -1036,7 +1130,7 @@ export default function TicketDetailPage() {
       });
       setMultiAgentResumeResult(result);
       setMultiAgentReviewSuccess("Multi-agent reply rejected.");
-      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id)]);
+      await Promise.all([loadSuggestions(ticket.id), loadAgentRuns(ticket.id), loadReviewedSuggestions(ticket.id)]);
     } catch (error: unknown) {
       setMultiAgentReviewError(getApiErrorDetail(error, "Reject action failed. Please try again."));
     } finally {
@@ -1165,147 +1259,62 @@ export default function TicketDetailPage() {
               </div>
             </div>
 
-            {!latestSingleAgentSuggestion && !singleAgentFinalReviewedSuggestion && !multiAgentFinalReviewedSuggestion ? (
+            {!allFinalReviews.length ? (
               <p className="panel-state">No final human-reviewed reply yet.</p>
             ) : (
               <div className="ai-panel-stack">
-                {/* Single-Agent reviewed via old AISuggestion path (backward compat) */}
-                {latestSingleAgentSuggestion &&
-                latestSingleAgentSuggestion.status !== "draft" ? (
-                  <article className="suggestion-card">
+                {allFinalReviews.map((review) => (
+                  <article key={review.id} className="suggestion-card">
                     <div className="suggestion-card__header">
                       <div>
-                        <strong>Source: Single-Agent</strong>
+                        <strong>Source: {sourceWorkflowLabel(normalizeSourceWorkflow(review.source_workflow))}</strong>
                         <span>
                           Reviewed at{" "}
-                          {formatDateTime(latestSingleAgentSuggestion.reviewed_at)}
+                          {formatDateTime(review.reviewed_at)}
                         </span>
                       </div>
                       <span
-                        className={`badge badge--suggestion-status badge--${latestSingleAgentSuggestion.status}`}
+                        className={`badge badge--suggestion-status badge--${review.status}`}
                       >
-                        {toLabel(latestSingleAgentSuggestion.status)}
+                        {toLabel(review.status)}
                       </span>
                     </div>
                     <div className="detail-stack detail-stack--compact">
                       <div className="detail-row">
                         <span>Reviewer</span>
                         <strong>
-                          {latestSingleAgentSuggestion.reviewed_by
-                            ? `User #${latestSingleAgentSuggestion.reviewed_by}`
-                            : "Not available"}
-                        </strong>
-                      </div>
-                    </div>
-                    {latestSingleAgentSuggestion.final_content ? (
-                      <div className="review-outcome__block">
-                        <span>Final approved content</span>
-                        <p>{latestSingleAgentSuggestion.final_content}</p>
-                      </div>
-                    ) : null}
-                    {latestSingleAgentSuggestion.reject_reason ? (
-                      <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
-                        <span>Reject reason</span>
-                        <p>{latestSingleAgentSuggestion.reject_reason}</p>
-                      </div>
-                    ) : null}
-                  </article>
-                ) : null}
-
-                {/* Single-Agent reviewed via new process/resume path */}
-                {singleAgentFinalReviewedSuggestion ? (
-                  <article className="suggestion-card">
-                    <div className="suggestion-card__header">
-                      <div>
-                        <strong>Source: Single-Agent Workflow</strong>
-                        <span>
-                          Reviewed at{" "}
-                          {formatDateTime(singleAgentFinalReviewedSuggestion.reviewed_at)}
-                        </span>
-                      </div>
-                      <span
-                        className={`badge badge--suggestion-status badge--${singleAgentFinalReviewedSuggestion.status}`}
-                      >
-                        {toLabel(singleAgentFinalReviewedSuggestion.status)}
-                      </span>
-                    </div>
-                    <div className="detail-stack detail-stack--compact">
-                      <div className="detail-row">
-                        <span>Reviewer</span>
-                        <strong>
-                          {singleAgentFinalReviewedSuggestion.reviewed_by
-                            ? `User #${singleAgentFinalReviewedSuggestion.reviewed_by}`
+                          {review.reviewed_by
+                            ? `User #${review.reviewed_by}`
                             : "Not available"}
                         </strong>
                       </div>
                       <div className="detail-row">
                         <span>Run ID</span>
                         <strong className="meta-card__value--mono">
-                          {latestAgentRun?.run_id ?? "N/A"}
+                          {review.source_run_id ?? "N/A"}
                         </strong>
                       </div>
                     </div>
-                    {singleAgentFinalReviewedSuggestion.final_content ? (
+                    {review.final_content ? (
                       <div className="review-outcome__block">
                         <span>Final approved content</span>
-                        <p>{singleAgentFinalReviewedSuggestion.final_content}</p>
+                        <p>{review.final_content}</p>
                       </div>
                     ) : null}
-                    {singleAgentFinalReviewedSuggestion.reject_reason ? (
+                    {review.reject_reason ? (
                       <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
                         <span>Reject reason</span>
-                        <p>{singleAgentFinalReviewedSuggestion.reject_reason}</p>
+                        <p>{review.reject_reason}</p>
                       </div>
                     ) : null}
+                    <details className="json-disclosure" style={{ marginTop: "0.5rem" }}>
+                      <summary>View original AI draft</summary>
+                      <p className="suggestion-card__content suggestion-card__content--original">
+                        {review.suggested_content}
+                      </p>
+                    </details>
                   </article>
-                ) : null}
-
-                {multiAgentFinalReviewedSuggestion ? (
-                  <article className="suggestion-card">
-                    <div className="suggestion-card__header">
-                      <div>
-                        <strong>Source: Multi-Agent</strong>
-                        <span>
-                          Reviewed at{" "}
-                          {formatDateTime(multiAgentFinalReviewedSuggestion.reviewed_at)}
-                        </span>
-                      </div>
-                      <span
-                        className={`badge badge--suggestion-status badge--${multiAgentFinalReviewedSuggestion.status}`}
-                      >
-                        {toLabel(multiAgentFinalReviewedSuggestion.status)}
-                      </span>
-                    </div>
-                    <div className="detail-stack detail-stack--compact">
-                      <div className="detail-row">
-                        <span>Reviewer</span>
-                        <strong>
-                          {multiAgentFinalReviewedSuggestion.reviewed_by
-                            ? `User #${multiAgentFinalReviewedSuggestion.reviewed_by}`
-                            : "Not available"}
-                        </strong>
-                      </div>
-                      <div className="detail-row">
-                        <span>Run ID</span>
-                        <strong className="meta-card__value--mono">
-                          {latestAgentRun?.run_id ?? "N/A"}
-                        </strong>
-                      </div>
-                    </div>
-                    {multiAgentFinalReviewedSuggestion.final_content ? (
-                      <div className="review-outcome__block">
-                        <span>Final approved content</span>
-                        <p>{multiAgentFinalReviewedSuggestion.final_content}</p>
-                      </div>
-                    ) : null}
-                    {multiAgentFinalReviewedSuggestion.reject_reason ? (
-                      <div className="review-outcome__block" style={{ borderLeftColor: "var(--color-danger)" }}>
-                        <span>Reject reason</span>
-                        <p>{multiAgentFinalReviewedSuggestion.reject_reason}</p>
-                      </div>
-                    ) : null}
-                  </article>
-                ) : null}
+                ))}
               </div>
             )}
           </article>
@@ -1515,9 +1524,9 @@ export default function TicketDetailPage() {
                     <article className="meta-card">
                       <span className="meta-card__label">Run ID</span>
                       <strong className="meta-card__value--mono">
-                        {latestAgentRun?.run_id ?? "N/A"}
+                        {latestSingleAgentWorkflowRun?.run_id ?? "N/A"}
                       </strong>
-                      <span>Status: {toLabel(latestAgentRun?.status ?? "completed")}</span>
+                      <span>Status: {toLabel(latestSingleAgentWorkflowRun?.status ?? "completed")}</span>
                     </article>
                   </div>
 
@@ -1860,12 +1869,12 @@ export default function TicketDetailPage() {
                   <article className="meta-card">
                     <span className="meta-card__label">Run ID</span>
                     <strong className="meta-card__value--mono">
-                      {multiAgentResult?.run_id ?? latestAgentRun?.run_id ?? "N/A"}
+                      {multiAgentResult?.run_id ?? latestMultiAgentRun?.run_id ?? "N/A"}
                     </strong>
                     <span>
                       {multiAgentResult
                         ? `Thread ID: ${multiAgentResult.thread_id}`
-                        : `Status: ${toLabel(latestAgentRun?.status ?? "completed")}`}
+                        : `Status: ${toLabel(latestMultiAgentRun?.status ?? "completed")}`}
                     </span>
                   </article>
                   <article className="meta-card">
@@ -1881,10 +1890,10 @@ export default function TicketDetailPage() {
                   </article>
                   <article className="meta-card">
                     <span className="meta-card__label">Persisted run</span>
-                    <strong>{latestAgentRun ? toLabel(latestAgentRun.status) : "Pending sync"}</strong>
+                    <strong>{latestMultiAgentRun ? toLabel(latestMultiAgentRun.status) : "Pending sync"}</strong>
                     <span>
-                      {latestAgentRun
-                        ? `Updated ${formatDateTime(latestAgentRun.updated_at)}`
+                      {latestMultiAgentRun
+                        ? `Updated ${formatDateTime(latestMultiAgentRun.updated_at)}`
                         : "Waiting for run-log refresh"}
                     </span>
                   </article>
@@ -2180,8 +2189,9 @@ export default function TicketDetailPage() {
                   onChange={(event_) => setAgentRunTypeFilter(event_.target.value)}
                 >
                   <option value="all">All</option>
+                  <option value="single_agent_rag">Single-Agent RAG</option>
                   <option value="multi_agent">Multi-Agent</option>
-                  <option value="workflow">Single-Agent Workflow</option>
+                  <option value="single_agent_workflow">Single-Agent Workflow</option>
                 </select>
               </label>
               <label className="field" style={{ flex: 1 }}>
@@ -2203,7 +2213,7 @@ export default function TicketDetailPage() {
             ) : agentRunHistoryError ? (
               <p className="form-error">{agentRunHistoryError}</p>
             ) : agentRunHistory.length === 0 ? (
-              agentRunTypeFilter === "workflow" ? (
+              agentRunTypeFilter === "single_agent_workflow" ? (
                 <p className="panel-state">
                   No Single-Agent Workflow runs found for this ticket. Generate a single-agent reply
                   draft from the Single-Agent RAG section above to create one.

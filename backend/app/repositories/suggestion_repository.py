@@ -63,6 +63,70 @@ class SuggestionRepository:
         )
         return self.db.scalar(statement)
 
+    def list_reply_suggestions_by_ticket_id_and_source(
+        self,
+        ticket_id: int,
+        source_workflow: str,
+    ) -> list[AISuggestion]:
+        statement = (
+            select(AISuggestion)
+            .where(
+                AISuggestion.ticket_id == ticket_id,
+                AISuggestion.suggestion_type == "reply",
+                AISuggestion.source_workflow == source_workflow,
+            )
+            .order_by(AISuggestion.created_at.desc(), AISuggestion.id.desc())
+        )
+        return list(self.db.scalars(statement).all())
+
+    def get_latest_reply_suggestion_by_ticket_id_and_source(
+        self,
+        ticket_id: int,
+        source_workflow: str,
+    ) -> AISuggestion | None:
+        statement = (
+            select(AISuggestion)
+            .where(
+                AISuggestion.ticket_id == ticket_id,
+                AISuggestion.suggestion_type == "reply",
+                AISuggestion.source_workflow == source_workflow,
+            )
+            .order_by(AISuggestion.created_at.desc(), AISuggestion.id.desc())
+        )
+        return self.db.scalar(statement)
+
+    def list_reviewed_reply_suggestions_by_ticket_id(
+        self,
+        ticket_id: int,
+    ) -> list[AISuggestion]:
+        statement = (
+            select(AISuggestion)
+            .where(
+                AISuggestion.ticket_id == ticket_id,
+                AISuggestion.suggestion_type == "reply",
+                AISuggestion.status.in_(("approved", "edited", "rejected")),
+            )
+            .order_by(AISuggestion.reviewed_at.desc(), AISuggestion.id.desc())
+        )
+        return list(self.db.scalars(statement).all())
+
+    def get_latest_reviewed_reply_by_ticket_id_and_source(
+        self,
+        ticket_id: int,
+        source_workflow: str,
+    ) -> AISuggestion | None:
+        statement = (
+            select(AISuggestion)
+            .where(
+                AISuggestion.ticket_id == ticket_id,
+                AISuggestion.suggestion_type == "reply",
+                AISuggestion.source_workflow == source_workflow,
+                AISuggestion.status.in_(("approved", "edited", "rejected")),
+            )
+            .order_by(AISuggestion.reviewed_at.desc(), AISuggestion.id.desc())
+        )
+        return self.db.scalar(statement)
+
     def _apply_pending_filters(
         self,
         statement,

@@ -94,11 +94,22 @@ class RagService:
             supplemental_context=supplemental_context or "None",
         )
 
-    def generate_ticket_reply(self, ticket: Ticket) -> AIReplyDraftRead:
+    def generate_ticket_reply(
+        self,
+        ticket: Ticket,
+        *,
+        source_workflow: str = "single_agent_rag",
+        source_run_id: str | None = None,
+    ) -> AIReplyDraftRead:
         # 标准入口：先根据工单构造检索 query，再走统一的 suggestion 创建逻辑。
         search_query = self.build_ticket_search_query(ticket)
         context = self.retrieve_context(search_query, top_k=5)
-        return self.generate_ticket_reply_from_context(ticket, context)
+        return self.generate_ticket_reply_from_context(
+            ticket,
+            context,
+            source_workflow=source_workflow,
+            source_run_id=source_run_id,
+        )
 
     def generate_ticket_reply_from_context(
         self,
@@ -106,13 +117,15 @@ class RagService:
         context: RetrievedContext,
         *,
         supplemental_context: str | None = None,
-        source_workflow: str = "single_agent",
+        source_workflow: str = "single_agent_rag",
+        source_run_id: str | None = None,
     ) -> AIReplyDraftRead:
         return self._create_reply_suggestion(
             ticket,
             context,
             supplemental_context=supplemental_context,
             source_workflow=source_workflow,
+            source_run_id=source_run_id,
         )
 
     @staticmethod
@@ -135,7 +148,8 @@ class RagService:
         context: RetrievedContext,
         *,
         supplemental_context: str | None = None,
-        source_workflow: str = "single_agent",
+        source_workflow: str = "single_agent_rag",
+        source_run_id: str | None = None,
     ) -> AIReplyDraftRead:
         # 无论是普通 RAG 还是 Multi-Agent ReplyAgent，
         # 最终都统一落成 AISuggestion，保证审核流只维护一套数据结构。
@@ -188,6 +202,7 @@ class RagService:
             ticket_id=ticket.id,
             suggestion_type="reply",
             source_workflow=source_workflow,
+            source_run_id=source_run_id,
             suggested_content=draft_reply,
             reasoning_summary=reasoning_summary,
             sources_json=sources,

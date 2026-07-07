@@ -14,6 +14,7 @@ class ReplyAgent(BaseTicketAgent):
         triage_result: dict,
         knowledge_result: dict,
         similar_case_result: dict,
+        run_id: str | None = None,
     ) -> dict:
         ticket = self.ticket_service.get_ticket(ticket_id)
         context = RetrievedContext(
@@ -30,6 +31,7 @@ class ReplyAgent(BaseTicketAgent):
             context,
             supplemental_context=supplemental_context,
             source_workflow="multi_agent",
+            source_run_id=run_id,
         )
         return {
             "agent_name": self.agent_name,

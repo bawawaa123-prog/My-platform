@@ -71,7 +71,7 @@ class TicketAgentGraph:
             self.agent_run_service.upsert_run_log(
                 ticket_id=ticket_id,
                 run_id=workflow_id,
-                run_type="workflow",
+                run_type="single_agent_workflow",
                 status="interrupted",
                 input_json=input_json,
                 output_json=pending_review.model_dump(mode="json"),
@@ -84,7 +84,7 @@ class TicketAgentGraph:
             self.agent_run_service.upsert_run_log(
                 ticket_id=ticket_id,
                 run_id=workflow_id,
-                run_type="workflow",
+                run_type="single_agent_workflow",
                 status="failed",
                 input_json=input_json,
                 output_json={},
@@ -98,7 +98,7 @@ class TicketAgentGraph:
             self.agent_run_service.upsert_run_log(
                 ticket_id=ticket_id,
                 run_id=workflow_id,
-                run_type="workflow",
+                run_type="single_agent_workflow",
                 status="failed",
                 input_json=input_json,
                 output_json={},
@@ -150,7 +150,7 @@ class TicketAgentGraph:
         self.agent_run_service.upsert_run_log(
             ticket_id=ticket_id,
             run_id=workflow_id,
-            run_type="workflow",
+            run_type="single_agent_workflow",
             status="completed",
             input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
             output_json=final_output,
@@ -310,7 +310,12 @@ class TicketAgentGraph:
 
     def _generate_reply(self, state: TicketAgentState) -> TicketAgentState:
         ticket = self.ticket_service.get_ticket(state["ticket_id"])
-        suggestion = self.rag_service.generate_ticket_reply(ticket)
+        run_id = state.get("run_id") or state.get("thread_id")
+        suggestion = self.rag_service.generate_ticket_reply(
+            ticket,
+            source_workflow="single_agent_workflow",
+            source_run_id=run_id,
+        )
         return {"reply_suggestion": suggestion.model_dump(mode="json")}
 
     def _risk_check(self, state: TicketAgentState) -> TicketAgentState:

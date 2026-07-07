@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.ai_sources import SINGLE_AGENT_RAG
 from app.db.base import Base, TimestampMixin
 
 
@@ -13,7 +14,10 @@ class AISuggestion(TimestampMixin, Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False, index=True)
     suggestion_type: Mapped[str] = mapped_column(String(50), nullable=False)
     source_workflow: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="single_agent", server_default="single_agent"
+        String(50), nullable=False, default=SINGLE_AGENT_RAG, server_default=SINGLE_AGENT_RAG, index=True
+    )
+    source_run_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
     )
     suggested_content: Mapped[str] = mapped_column(Text, nullable=False)
     reasoning_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

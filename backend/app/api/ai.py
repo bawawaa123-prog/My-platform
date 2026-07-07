@@ -48,19 +48,26 @@ def generate_ticket_reply(
 ) -> AIReplyDraftRead:
     # 这里直接走 RAG 服务生成回复草稿，并把来源与置信度一起返回。
     ticket = TicketService(db).get_ticket(ticket_id)
-    suggestion = RagService(db).generate_ticket_reply(ticket)
+    run_id = str(uuid4())
+    suggestion = RagService(db).generate_ticket_reply(
+        ticket,
+        source_workflow="single_agent_rag",
+        source_run_id=run_id,
+    )
 
     # 持久化 AgentRunLog，使 Agent Run History 可追溯单 Agent 执行
     AgentRunService(db).upsert_run_log(
         ticket_id=ticket_id,
-        run_id=str(uuid4()),
-        run_type="workflow",
+        run_id=run_id,
+        run_type="single_agent_rag",
         status="completed",
         input_json={"ticket_id": ticket_id},
         output_json={
             "suggestion_id": suggestion.id,
             "suggested_content": suggestion.suggested_content,
             "confidence": suggestion.confidence,
+            "source_workflow": "single_agent_rag",
+            "source_run_id": run_id,
         },
         audit_trail_json=[],
         created_by=current_user.id,
@@ -77,6 +84,18 @@ def list_ticket_suggestions(
 ) -> list[AIReplyDraftRead]:
     TicketService(db).get_ticket(ticket_id)
     suggestions = RagService(db).suggestion_repository.list_reply_suggestions_by_ticket_id(ticket_id)
+    return [AIReplyDraftRead.model_validate(suggestion) for suggestion in suggestions]
+
+
+@router.get("/tickets/{ticket_id}/reviewed-suggestions", response_model=list[AIReplyDraftRead])
+def list_reviewed_suggestions(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AIReplyDraftRead]:
+    """Return all reviewed (approved/edited/rejected) reply suggestions for Final Review."""
+    TicketService(db).get_ticket(ticket_id)
+    suggestions = RagService(db).suggestion_repository.list_reviewed_reply_suggestions_by_ticket_id(ticket_id)
     return [AIReplyDraftRead.model_validate(suggestion) for suggestion in suggestions]
 
 

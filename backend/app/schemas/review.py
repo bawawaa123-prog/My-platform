@@ -34,7 +34,7 @@ class PendingSuggestionRead(BaseModel):
     ticket_category: str
     customer_email: str
     suggestion_type: str
-    source_workflow: str = "single_agent"
+    source_workflow: str = "single_agent_rag"
     suggested_content: str
     reasoning_summary: str | None
     sources_json: list[dict]
@@ -56,7 +56,7 @@ class SuggestionReviewResponse(BaseModel):
     id: int
     ticket_id: int
     suggestion_type: str
-    source_workflow: str = "single_agent"
+    source_workflow: str = "single_agent_rag"
     suggested_content: str
     reasoning_summary: str | None
     sources_json: list[dict]

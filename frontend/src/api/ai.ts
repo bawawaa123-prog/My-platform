@@ -24,7 +24,8 @@ export type AIReplyDraftRead = {
   id: number;
   ticket_id: number;
   suggestion_type: string;
-  source_workflow?: string;
+  source_workflow: "single_agent_rag" | "single_agent_workflow" | "multi_agent" | "manual" | string;
+  source_run_id: string | null;
   suggested_content: string;
   reasoning_summary: string | null;
   sources_json: AIReplySource[];
@@ -37,6 +38,16 @@ export type AIReplyDraftRead = {
   created_at: string;
   updated_at: string;
 };
+
+export function normalizeSourceWorkflow(value: string | undefined | null): string {
+  if (!value || value === "single_agent") {
+    return "single_agent_rag";
+  }
+  if (value === "workflow") {
+    return "single_agent_workflow";
+  }
+  return value;
+}
 
 export type SuggestionApprovePayload = {
   final_content?: string;
@@ -171,7 +182,7 @@ export type AgentRunLogRead = {
   id: number;
   ticket_id: number;
   run_id: string;
-  run_type: string;
+  run_type: "single_agent_rag" | "single_agent_workflow" | "multi_agent" | "workflow" | string;
   status: string;
   input_json: Record<string, unknown>;
   output_json: Record<string, unknown>;
@@ -309,6 +320,13 @@ export async function resumeSingleAgentProcess(
   const response = await apiClient.post<AIWorkflowProcessRead>(
     `/ai/tickets/${ticketId}/process/resume`,
     payload,
+  );
+  return response.data;
+}
+
+export async function listReviewedSuggestions(ticketId: number) {
+  const response = await apiClient.get<AIReplyDraftRead[]>(
+    `/ai/tickets/${ticketId}/reviewed-suggestions`,
   );
   return response.data;
 }

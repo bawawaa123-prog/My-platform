@@ -440,6 +440,7 @@ class TicketMultiAgentGraph:
             triage_result=state["triage_result"],
             knowledge_result=state["knowledge_result"],
             similar_case_result=state["similar_case_result"],
+            run_id=state.get("run_id") or state.get("thread_id"),
         )
         reply = result["reply_suggestion"]
         return {

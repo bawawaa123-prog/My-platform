@@ -1,5 +1,5 @@
 """Quick end-to-end verification: run single-agent workflow with review,
-then check that AgentRunLog entries with run_type='workflow' are created."""
+then check that AgentRunLog entries with run_type='single_agent_workflow' are created."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -73,13 +73,13 @@ class TestSingleAgentWorkflowRunLog:
         # Check agent-runs page filtered by run_type='workflow'
         page = list_agent_runs_page(
             client, ticket["id"], auth_headers,
-            {"run_type": "workflow", "limit": 20, "offset": 0},
+            {"run_type": "single_agent_workflow", "limit": 20, "offset": 0},
         )
         assert page["total"] >= 1, "Expected at least 1 workflow run log entry"
 
         matched = next((r for r in page["items"] if r["run_id"] == workflow_id), None)
         assert matched is not None, f"Workflow run_id={workflow_id} not found in agent runs"
-        assert matched["run_type"] == "workflow"
+        assert matched["run_type"] == "single_agent_workflow"
         assert matched["status"] == "interrupted"
         assert matched["ticket_id"] == ticket["id"]
 
@@ -105,11 +105,11 @@ class TestSingleAgentWorkflowRunLog:
 
         page = list_agent_runs_page(
             client, ticket["id"], auth_headers,
-            {"run_type": "workflow", "limit": 20, "offset": 0},
+            {"run_type": "single_agent_workflow", "limit": 20, "offset": 0},
         )
         matched = next((r for r in page["items"] if r["run_id"] == workflow_id), None)
         assert matched is not None
-        assert matched["run_type"] == "workflow"
+        assert matched["run_type"] == "single_agent_workflow"
         assert matched["status"] == "completed"
         assert matched["output_json"]["reviewed_suggestion"]["status"] == "approved"
 
@@ -135,11 +135,11 @@ class TestSingleAgentWorkflowRunLog:
 
         page = list_agent_runs_page(
             client, ticket["id"], auth_headers,
-            {"run_type": "workflow", "limit": 20, "offset": 0},
+            {"run_type": "single_agent_workflow", "limit": 20, "offset": 0},
         )
         matched = next((r for r in page["items"] if r["run_id"] == workflow_id), None)
         assert matched is not None
-        assert matched["run_type"] == "workflow"
+        assert matched["run_type"] == "single_agent_workflow"
         assert matched["status"] == "completed"
 
     def test_single_agent_reject_updates_to_completed(
@@ -164,11 +164,11 @@ class TestSingleAgentWorkflowRunLog:
 
         page = list_agent_runs_page(
             client, ticket["id"], auth_headers,
-            {"run_type": "workflow", "limit": 20, "offset": 0},
+            {"run_type": "single_agent_workflow", "limit": 20, "offset": 0},
         )
         matched = next((r for r in page["items"] if r["run_id"] == workflow_id), None)
         assert matched is not None
-        assert matched["run_type"] == "workflow"
+        assert matched["run_type"] == "single_agent_workflow"
         assert matched["status"] == "completed"
 
     def test_workflow_filter_shows_only_workflow_runs(
@@ -207,10 +207,10 @@ class TestSingleAgentWorkflowRunLog:
         # Filter by workflow only
         workflow_page = list_agent_runs_page(
             client, ticket["id"], auth_headers,
-            {"run_type": "workflow", "limit": 20, "offset": 0},
+            {"run_type": "single_agent_workflow", "limit": 20, "offset": 0},
         )
         for item in workflow_page["items"]:
-            assert item["run_type"] == "workflow", f"Expected run_type='workflow', got '{item['run_type']}'"
+            assert item["run_type"] == "single_agent_workflow", f"Expected run_type='single_agent_workflow', got '{item['run_type']}'"
         assert workflow_page["total"] >= 1
 
         # Filter by multi_agent only
@@ -253,16 +253,16 @@ class TestGenerateReplyRunLog:
         assert response.status_code == 200, response.text
         suggestion = response.json()
 
-        # Check agent-runs page filtered by run_type='workflow'
+        # Check agent-runs page filtered by run_type='single_agent_rag'
         page = list_agent_runs_page(
             client, ticket["id"], auth_headers,
-            {"run_type": "workflow", "limit": 20, "offset": 0},
+            {"run_type": "single_agent_rag", "limit": 20, "offset": 0},
         )
-        assert page["total"] >= 1, "Expected at least 1 workflow run log entry from generate-reply"
+        assert page["total"] >= 1, "Expected at least 1 single_agent_rag run log entry from generate-reply"
 
-        # Verify the most recent workflow run has the correct data
+        # Verify the most recent single_agent_rag run has the correct data
         matched = page["items"][0]
-        assert matched["run_type"] == "workflow"
+        assert matched["run_type"] == "single_agent_rag"
         assert matched["status"] == "completed"
         assert matched["ticket_id"] == ticket["id"]
         assert matched["output_json"]["suggestion_id"] == suggestion["id"]

@@ -36,7 +36,8 @@ class AIReplyDraftRead(BaseModel):
     id: int
     ticket_id: int
     suggestion_type: str
-    source_workflow: str = "single_agent"
+    source_workflow: str = "single_agent_rag"
+    source_run_id: str | None = None
     suggested_content: str
     reasoning_summary: str | None
     sources_json: list[AIReplySource]

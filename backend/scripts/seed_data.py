@@ -635,6 +635,8 @@ def reseed_ticket_suggestions(
         suggestion = AISuggestion(
             ticket_id=ticket.id,
             suggestion_type="reply",
+            source_workflow="single_agent_rag",
+            source_run_id=None,
             suggested_content=suggestion_seed.suggested_content,
             reasoning_summary=suggestion_seed.reasoning_summary,
             sources_json=build_sources_json(
