@@ -17,6 +17,18 @@ function toLabel(value: string) {
     .join(" ");
 }
 
+function formatSourceWorkflow(value: string): string {
+  if (value === "multi_agent") return "Multi-Agent";
+  if (
+    value === "single_agent_rag" ||
+    value === "single_agent_workflow" ||
+    value === "single_agent" ||
+    value === "workflow"
+  )
+    return "Single-Agent";
+  return toLabel(value);
+}
+
 export default function PendingReviewsPage() {
   const [items, setItems] = useState<PendingSuggestionRead[]>([]);
   const [total, setTotal] = useState(0);
@@ -109,6 +121,8 @@ export default function PendingReviewsPage() {
                     <th>Category</th>
                     <th>Status</th>
                     <th>Customer</th>
+                    <th>Source</th>
+                    <th>Run ID</th>
                     <th>Suggested Reply</th>
                     <th>Confidence</th>
                     <th>Created</th>
@@ -151,6 +165,20 @@ export default function PendingReviewsPage() {
                         </span>
                       </td>
                       <td>{item.customer_email}</td>
+                      <td>
+                        <span className="badge badge--category">
+                          {formatSourceWorkflow(item.source_workflow)}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="ticket-link__meta" title={item.source_run_id ?? undefined}>
+                          {item.source_run_id
+                            ? item.source_run_id.length > 16
+                              ? item.source_run_id.slice(0, 16) + "..."
+                              : item.source_run_id
+                            : "N/A"}
+                        </span>
+                      </td>
                       <td className="suggestion-content-cell">
                         <SuggestionPreview content={item.suggested_content} />
                       </td>

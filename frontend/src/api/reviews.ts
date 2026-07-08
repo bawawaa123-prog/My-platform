@@ -9,6 +9,8 @@ export type PendingSuggestionRead = {
   ticket_status: string;
   customer_email: string;
   suggestion_type: string;
+  source_workflow: string;
+  source_run_id: string | null;
   suggested_content: string;
   reasoning_summary: string | null;
   sources_json: Record<string, unknown>[];

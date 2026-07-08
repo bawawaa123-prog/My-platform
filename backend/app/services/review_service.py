@@ -177,6 +177,7 @@ class ReviewService:
                     "customer_email": ticket.customer_email,
                     "suggestion_type": suggestion.suggestion_type,
                     "source_workflow": suggestion.source_workflow or "single_agent_rag",
+                    "source_run_id": suggestion.source_run_id,
                     "suggested_content": suggestion.suggested_content,
                     "reasoning_summary": suggestion.reasoning_summary,
                     "sources_json": suggestion.sources_json,

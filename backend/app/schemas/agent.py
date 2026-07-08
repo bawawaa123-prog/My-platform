@@ -41,3 +41,9 @@ class AgentRunLogPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class LatestAgentRunsByType(BaseModel):
+    single_agent_rag: AgentRunLogRead | None = None
+    single_agent_workflow: AgentRunLogRead | None = None
+    multi_agent: AgentRunLogRead | None = None

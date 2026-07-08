@@ -271,6 +271,21 @@ export async function listTicketAgentRunsPage(
   return response.data;
 }
 
+export type LatestAgentRunsByType = {
+  single_agent_rag: AgentRunLogRead | null;
+  single_agent_workflow: AgentRunLogRead | null;
+  multi_agent: AgentRunLogRead | null;
+};
+
+export async function getLatestTicketAgentRunsByType(
+  ticketId: number,
+): Promise<LatestAgentRunsByType> {
+  const response = await apiClient.get<LatestAgentRunsByType>(
+    `/ai/tickets/${ticketId}/agent-runs/latest-by-type`,
+  );
+  return response.data;
+}
+
 export type AIWorkflowPendingReviewRead = {
   run_id: string;
   thread_id: string;

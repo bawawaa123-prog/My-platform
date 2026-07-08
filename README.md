@@ -14,6 +14,7 @@ D:\tools\anaconda\envs\py312\python.exe scripts/seed_data.py
 D:\tools\anaconda\envs\py312\python.exe -m uvicorn app.main:app --reload --port 8010
 ```
 
+
 后端地址：`http://localhost:8010`，Health 检查：`http://localhost:8010/health`
 
 ### 前端

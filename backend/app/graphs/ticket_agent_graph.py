@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -118,46 +119,161 @@ class TicketAgentGraph:
         final_content: str | None = None,
         reject_reason: str | None = None,
     ) -> AIWorkflowProcessRead:
-        # resume 的本质是把“审核动作”作为 Command 重新送回 LangGraph checkpoint。
+        # resume 的本质是把"审核动作"作为 Command 重新送回 LangGraph checkpoint。
+        # 如果 InMemorySaver checkpoint 因服务重启而丢失，则回退到数据库持久化方式。
         config = self._build_config(workflow_id)
         snapshot = self.interrupt_graph.get_state(config)
-        if not snapshot.next:
+
+        # Normal path: checkpoint 仍存在
+        if snapshot.next:
+            if snapshot.values.get("ticket_id") != ticket_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Workflow thread_id/run_id does not belong to the requested ticket.",
+                )
+
+            review_command = {
+                "action": action,
+                "reviewer_user_id": reviewer_user_id,
+                "final_content": final_content,
+                "reject_reason": reject_reason,
+            }
+            state = self.interrupt_graph.invoke(Command(resume=review_command), config)
+            final_output = state.get("final_output")
+            if not final_output:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Workflow resume did not produce a final output.",
+                )
+
+            # 持久化 resume 结果到 AgentRunLog
+            self.agent_run_service.upsert_run_log(
+                ticket_id=ticket_id,
+                run_id=workflow_id,
+                run_type="single_agent_workflow",
+                status="completed",
+                input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
+                output_json=final_output,
+                audit_trail_json=[],
+            )
+
+            return AIWorkflowProcessRead.model_validate(final_output)
+
+        # Fallback: checkpoint 丢失（服务重启后 InMemorySaver 清空）
+        return self._fallback_resume(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            action=action,
+            reviewer_user_id=reviewer_user_id,
+            final_content=final_content,
+            reject_reason=reject_reason,
+        )
+
+    def _fallback_resume(
+        self,
+        *,
+        workflow_id: str,
+        ticket_id: int,
+        action: str,
+        reviewer_user_id: int,
+        final_content: str | None = None,
+        reject_reason: str | None = None,
+    ) -> AIWorkflowProcessRead:
+        """Database fallback resume when InMemorySaver checkpoint is lost after restart.
+
+        Finds the interrupted AgentRunLog in the database, extracts the pending
+        suggestion_id from output_json, applies the review action via ReviewService,
+        and updates the run log as completed.
+        """
+        run_log = self.agent_run_service.get_interrupted_run_for_resume(
+            ticket_id=ticket_id,
+            run_id=workflow_id,
+            allowed_workflows=["single_agent_rag", "single_agent_workflow"],
+        )
+        if run_log is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No interrupted workflow found for the provided thread_id/run_id.",
-            )
-        if snapshot.values.get("ticket_id") != ticket_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Workflow thread_id/run_id does not belong to the requested ticket.",
+                detail="No interrupted workflow checkpoint or persisted pending review was found for this run.",
             )
 
-        review_command = {
-            "action": action,
-            "reviewer_user_id": reviewer_user_id,
-            "final_content": final_content,
-            "reject_reason": reject_reason,
+        output_json = run_log.output_json
+        suggestion_id = self._extract_suggestion_id_from_output(output_json)
+        if suggestion_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No pending review suggestion found in the persisted run log.",
+            )
+
+        # Apply review action via the existing ReviewService
+        reviewed = self.review_service.apply_review_action(
+            suggestion_id=suggestion_id,
+            action=action,
+            current_user=self.ticket_service.get_user_by_id(reviewer_user_id),
+            final_content=final_content,
+            reject_reason=reject_reason,
+        )
+        reviewed_dict = AIReplyDraftRead.model_validate(reviewed).model_dump(mode="json")
+
+        # Build final_output matching the normal LangGraph resume response
+        final_output = {
+            "ticket": output_json.get("ticket"),
+            "classification": output_json.get("classification"),
+            "knowledge_hits": output_json.get("knowledge_hits", []),
+            "similar_tickets": output_json.get("similar_tickets", []),
+            "reply_suggestion": output_json.get("draft_reply"),
+            "risk_check": output_json.get("risk_check"),
+            "review_decision": {
+                "action": action,
+                "reviewer_user_id": reviewer_user_id,
+                "final_content": final_content,
+                "reject_reason": reject_reason,
+            },
+            "reviewed_suggestion": reviewed_dict,
         }
-        state = self.interrupt_graph.invoke(Command(resume=review_command), config)
-        final_output = state.get("final_output")
-        if not final_output:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Workflow resume did not produce a final output.",
-            )
 
-        # 持久化 resume 结果到 AgentRunLog
+        # Mark AgentRunLog as completed, preserving original data + fallback metadata
+        completed_output = dict(output_json)
+        completed_output.update({
+            "reviewed_suggestion": reviewed_dict,
+            "review_action": action,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "fallback_resumed": True,
+        })
         self.agent_run_service.upsert_run_log(
             ticket_id=ticket_id,
             run_id=workflow_id,
             run_type="single_agent_workflow",
             status="completed",
-            input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
-            output_json=final_output,
-            audit_trail_json=[],
+            input_json=run_log.input_json,
+            output_json=completed_output,
+            audit_trail_json=run_log.audit_trail_json,
         )
 
         return AIWorkflowProcessRead.model_validate(final_output)
+
+    @staticmethod
+    def _extract_suggestion_id_from_output(output_json: dict) -> int | None:
+        """Extract suggestion_id from output_json, trying multiple known paths.
+
+        Compatible with all known output_json structures across workflow versions.
+        """
+        paths = [
+            ["draft_reply", "id"],
+            ["reply_suggestion", "id"],
+            ["reviewed_suggestion", "id"],
+            ["result", "draft_reply", "id"],
+            ["result", "reply_suggestion", "id"],
+        ]
+        for path in paths:
+            val = output_json
+            try:
+                for key in path:
+                    val = val[key]
+                if val is not None:
+                    return int(val)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return None
 
     def get_pending_review(self, workflow_id: str) -> AIWorkflowPendingReviewRead:
         config = self._build_config(workflow_id)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from copy import deepcopy
 from uuid import uuid4
@@ -27,6 +28,8 @@ from app.models.ai_suggestion import AISuggestion
 from app.models.audit_log import AuditLog
 from app.models.ticket import Ticket
 
+logger = logging.getLogger(__name__)
+
 _MULTI_AGENT_CHECKPOINTER = InMemorySaver()
 
 
@@ -48,26 +51,33 @@ class TicketMultiAgentGraph:
     def preview(self, ticket_id: int) -> dict:
         # preview 给 MCP dry_run 用：
         # 会真的跑一遍图，但最后把 suggestion、audit_log、ticket 状态等副作用清理掉。
-        workflow_id = str(uuid4())
+        # 使用 preview_run_id 标记本次 preview 产生的全部数据，避免误删其他请求的数据。
+        preview_run_id = f"preview-{uuid4()}"
+        thread_id = str(uuid4())
+        preview_started_at = datetime.now(UTC)
+
         ticket_before_obj = self.ticket_service.get_ticket(ticket_id)
         ticket_before = deepcopy(self.ticket_service.serialize_ticket(ticket_before_obj))
-        suggestion_ids_before = self._get_reply_suggestion_ids(ticket_id)
-        audit_log_ids_before = self._get_related_audit_log_ids(ticket_id, suggestion_ids_before)
-        result = self.graph.invoke(
+        ticket_before_updated_at = ticket_before_obj.updated_at
+
+        self.graph.invoke(
             {
                 "ticket_id": ticket_id,
-                "run_id": workflow_id,
-                "thread_id": workflow_id,
+                "run_id": preview_run_id,
+                "thread_id": thread_id,
             },
-            {"configurable": {"thread_id": workflow_id}},
+            {"configurable": {"thread_id": thread_id}},
         )
-        pending_review = self.get_pending_review(workflow_id)
+        preview_finished_at = datetime.now(UTC)
+        pending_review = self.get_pending_review(thread_id)
 
         self._cleanup_preview_side_effects(
             ticket_id=ticket_id,
+            preview_run_id=preview_run_id,
+            preview_started_at=preview_started_at,
+            preview_finished_at=preview_finished_at,
             ticket_before=ticket_before,
-            suggestion_ids_before=suggestion_ids_before,
-            audit_log_ids_before=audit_log_ids_before,
+            ticket_before_updated_at=ticket_before_updated_at,
         )
 
         ticket_after = self.ticket_service.serialize_ticket(self.ticket_service.get_ticket(ticket_id))
@@ -75,7 +85,7 @@ class TicketMultiAgentGraph:
         preview_result = pending_review.model_dump(mode="json")
         preview_result["ticket"] = ticket_before
         reply_suggestion = preview_result.get("reply_result", {}).get("reply_suggestion")
-        if reply_suggestion and reply_suggestion.get("id") not in suggestion_ids_before:
+        if reply_suggestion and reply_suggestion.get("id"):
             reply_suggestion["id"] = None
             reply_suggestion["status"] = "dry_run"
             reply_suggestion["reviewed_by"] = None
@@ -221,45 +231,163 @@ class TicketMultiAgentGraph:
     ) -> AIMultiAgentProcessRead:
         # resume 把审核动作通过 Command 送回 LangGraph checkpoint，
         # 让 human_review -> finalize 继续执行。
+        # 如果 InMemorySaver checkpoint 因服务重启而丢失，则回退到数据库持久化方式。
         config = {"configurable": {"thread_id": workflow_id}}
         snapshot = self.graph.get_state(config)
-        if not snapshot.next:
+
+        # Normal path: checkpoint 仍存在
+        if snapshot.next:
+            if snapshot.values.get("ticket_id") != ticket_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Workflow thread_id/run_id does not belong to the requested ticket.",
+                )
+
+            review_command = {
+                "action": action,
+                "reviewer_user_id": reviewer_user_id,
+                "final_content": final_content,
+                "reject_reason": reject_reason,
+            }
+            state = self.graph.invoke(Command(resume=review_command), config)
+            final_output = state.get("final_output")
+            if not final_output:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Multi-agent workflow resume did not produce a final output.",
+                )
+
+            # 持久化 resume 结果到 AgentRunLog
+            self.agent_run_service.upsert_run_log(
+                ticket_id=ticket_id,
+                run_id=workflow_id,
+                run_type="multi_agent",
+                status="completed",
+                input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
+                output_json=final_output,
+                audit_trail_json=final_output.get("audit_trail", []),
+            )
+
+            return AIMultiAgentProcessRead.model_validate(final_output)
+
+        # Fallback: checkpoint 丢失（服务重启后 InMemorySaver 清空）
+        return self._fallback_resume(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            action=action,
+            reviewer_user_id=reviewer_user_id,
+            final_content=final_content,
+            reject_reason=reject_reason,
+        )
+
+    def _fallback_resume(
+        self,
+        *,
+        workflow_id: str,
+        ticket_id: int,
+        action: str,
+        reviewer_user_id: int,
+        final_content: str | None = None,
+        reject_reason: str | None = None,
+    ) -> AIMultiAgentProcessRead:
+        """Database fallback resume when InMemorySaver checkpoint is lost after restart.
+
+        Finds the interrupted AgentRunLog in the database, extracts the pending
+        suggestion_id from output_json, applies the review action via ReviewService,
+        and updates the run log as completed.
+        """
+        run_log = self.agent_run_service.get_interrupted_run_for_resume(
+            ticket_id=ticket_id,
+            run_id=workflow_id,
+            allowed_workflows=["multi_agent"],
+        )
+        if run_log is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No interrupted multi-agent workflow found for the provided thread_id/run_id.",
-            )
-        if snapshot.values.get("ticket_id") != ticket_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Workflow thread_id/run_id does not belong to the requested ticket.",
+                detail="No interrupted multi-agent workflow checkpoint or persisted pending review was found for this run.",
             )
 
-        review_command = {
-            "action": action,
-            "reviewer_user_id": reviewer_user_id,
-            "final_content": final_content,
-            "reject_reason": reject_reason,
+        output_json = run_log.output_json
+        suggestion_id = self._extract_suggestion_id_from_output(output_json)
+        if suggestion_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No pending review suggestion found in the persisted multi-agent run log.",
+            )
+
+        # Apply review action via the existing ReviewService
+        reviewed = self.review_service.apply_review_action(
+            suggestion_id=suggestion_id,
+            action=action,
+            current_user=self.ticket_service.get_user_by_id(reviewer_user_id),
+            final_content=final_content,
+            reject_reason=reject_reason,
+        )
+        reviewed_dict = AIReplyDraftRead.model_validate(reviewed).model_dump(mode="json")
+
+        # Build final_output matching the normal LangGraph resume response
+        final_output = {
+            "ticket": output_json.get("ticket"),
+            "supervisor_result": output_json.get("supervisor_result"),
+            "triage_result": output_json.get("triage_result"),
+            "knowledge_result": output_json.get("knowledge_result"),
+            "similar_case_result": output_json.get("similar_case_result"),
+            "reply_result": output_json.get("reply_result"),
+            "risk_result": output_json.get("risk_result"),
+            "workflow_result": output_json.get("workflow_result"),
+            "audit_trail": output_json.get("audit_trail", []),
+            "review_decision": {
+                "action": action,
+                "reviewer_user_id": reviewer_user_id,
+                "final_content": final_content,
+                "reject_reason": reject_reason,
+            },
+            "reviewed_suggestion": reviewed_dict,
         }
-        state = self.graph.invoke(Command(resume=review_command), config)
-        final_output = state.get("final_output")
-        if not final_output:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Multi-agent workflow resume did not produce a final output.",
-            )
 
-        # 持久化 resume 结果到 AgentRunLog
+        # Mark AgentRunLog as completed, preserving original data + fallback metadata
+        completed_output = dict(output_json)
+        completed_output.update({
+            "reviewed_suggestion": reviewed_dict,
+            "review_action": action,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "fallback_resumed": True,
+        })
         self.agent_run_service.upsert_run_log(
             ticket_id=ticket_id,
             run_id=workflow_id,
             run_type="multi_agent",
             status="completed",
-            input_json={"ticket_id": ticket_id, "run_id": workflow_id, "thread_id": workflow_id},
-            output_json=final_output,
-            audit_trail_json=final_output.get("audit_trail", []),
+            input_json=run_log.input_json,
+            output_json=completed_output,
+            audit_trail_json=run_log.audit_trail_json,
         )
 
         return AIMultiAgentProcessRead.model_validate(final_output)
+
+    @staticmethod
+    def _extract_suggestion_id_from_output(output_json: dict) -> int | None:
+        """Extract suggestion_id from output_json, trying multiple known paths.
+
+        Compatible with all known output_json structures across multi-agent versions.
+        """
+        paths = [
+            ["reply_result", "reply_suggestion", "id"],
+            ["reply_suggestion", "id"],
+            ["draft_reply", "id"],
+            ["reviewed_suggestion", "id"],
+            ["result", "reply_result", "reply_suggestion", "id"],
+        ]
+        for path in paths:
+            val = output_json
+            try:
+                for key in path:
+                    val = val[key]
+                if val is not None:
+                    return int(val)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return None
 
     def _build_graph(self):
         # 当前版本采用固定顺序图，优先保证演示稳定性和输出可解释性。
@@ -288,84 +416,65 @@ class TicketMultiAgentGraph:
         builder.add_edge("finalize", END)
         return builder.compile(checkpointer=_MULTI_AGENT_CHECKPOINTER)
 
-    def _get_reply_suggestion_ids(self, ticket_id: int) -> set[int]:
-        suggestions = self.reply_agent.rag_service.suggestion_repository.list_reply_suggestions_by_ticket_id(ticket_id)
-        return {suggestion.id for suggestion in suggestions}
-
     def _get_latest_reply_suggestion_id(self, ticket_id: int) -> int | None:
         suggestions = self.reply_agent.rag_service.suggestion_repository.list_reply_suggestions_by_ticket_id(ticket_id)
         return suggestions[0].id if suggestions else None
-
-    def _get_ticket_audit_log_ids(self, ticket_id: int) -> set[int]:
-        statement = self.db.query(AuditLog.id).filter(
-            AuditLog.target_type == "ticket",
-            AuditLog.target_id == ticket_id,
-        )
-        return {row[0] for row in statement.all()}
-
-    def _get_related_audit_log_ids(self, ticket_id: int, suggestion_ids_before: set[int]) -> set[int]:
-        ticket_audit_log_ids = self._get_ticket_audit_log_ids(ticket_id)
-        suggestion_audit_log_ids: set[int] = set()
-        if suggestion_ids_before:
-            statement = self.db.query(AuditLog.id).filter(
-                AuditLog.target_type == "ai_suggestion",
-                AuditLog.target_id.in_(suggestion_ids_before),
-            )
-            suggestion_audit_log_ids = {row[0] for row in statement.all()}
-        return ticket_audit_log_ids | suggestion_audit_log_ids
 
     def _cleanup_preview_side_effects(
         self,
         *,
         ticket_id: int,
+        preview_run_id: str,
+        preview_started_at: datetime,
+        preview_finished_at: datetime,
         ticket_before: dict,
-        suggestion_ids_before: set[int],
-        audit_log_ids_before: set[int],
+        ticket_before_updated_at: datetime | None,
     ) -> None:
-        new_suggestions = (
-            self.db.query(AISuggestion)
-            .filter(
-                AISuggestion.ticket_id == ticket_id,
-                AISuggestion.suggestion_type == "reply",
-                ~AISuggestion.id.in_(suggestion_ids_before) if suggestion_ids_before else True,
-            )
-            .all()
-        )
-        for suggestion in new_suggestions:
-            self.db.delete(suggestion)
+        # === 清理 AISuggestion ===
+        # AISuggestion 有 source_run_id 字段，preview 期间由 ReplyAgent 写入，
+        # 所以可以直接按 source_run_id 精准删除，不会误删其他请求产生的 suggestion。
+        self.db.query(AISuggestion).filter(
+            AISuggestion.ticket_id == ticket_id,
+            AISuggestion.source_run_id == preview_run_id,
+        ).delete(synchronize_session="fetch")
 
-        new_ticket_audit_logs = (
-            self.db.query(AuditLog)
-            .filter(
-                AuditLog.id.notin_(audit_log_ids_before) if audit_log_ids_before else True,
-                (
-                    ((AuditLog.target_type == "ticket") & (AuditLog.target_id == ticket_id))
-                    | ((AuditLog.target_type == "ai_suggestion"))
-                ),
-            )
-            .all()
-        )
-        for audit_log in new_ticket_audit_logs:
-            self.db.delete(audit_log)
+        # === 清理 AuditLog ===
+        # AuditLog 没有 source_run_id 字段，改用 ticket_id + 时间窗口 + action 白名单精准删除。
+        # 只删除 preview 期间当前 ticket 下的两类 audit log，不涉及其他 ticket 或其他 action。
+        PREVIEW_AUDIT_ACTIONS = {"classify_ticket_ai", "apply_workflow_recommendation"}
+        self.db.query(AuditLog).filter(
+            AuditLog.target_type == "ticket",
+            AuditLog.target_id == ticket_id,
+            AuditLog.created_at >= preview_started_at,
+            AuditLog.created_at <= preview_finished_at,
+            AuditLog.action.in_(PREVIEW_AUDIT_ACTIONS),
+        ).delete(synchronize_session="fetch")
 
-        remaining_new_audit_logs = (
-            self.db.query(AuditLog)
-            .filter(AuditLog.id.notin_(audit_log_ids_before) if audit_log_ids_before else True)
-            .all()
-        )
-        for audit_log in remaining_new_audit_logs:
-            self.db.delete(audit_log)
-
+        # === 恢复 Ticket 原状态 + 并发安全保护 ===
         ticket = self.db.get(Ticket, ticket_id)
         if ticket is not None:
-            ticket.category = ticket_before["category"]
-            ticket.priority = ticket_before["priority"]
-            ticket.sentiment = ticket_before["sentiment"]
-            ticket.status = ticket_before["status"]
-            ticket.ai_summary = ticket_before["ai_summary"]
-            ticket.recommended_department = ticket_before["recommended_department"]
-            ticket.assigned_to = ticket_before["assigned_to"]
-            ticket.closed_at = ticket_before["closed_at"]
+            # 检查 updated_at：如果 preview 期间有真实请求改了同一个 ticket，
+            # 则 ticket.updated_at 会被 SQLAlchemy onupdate 更新，不再等于 preview 修改后的值。
+            # 此时跳过恢复，避免覆盖真实变更，只记录 warning 让运维察觉。
+            expected_updated_at = ticket_before_updated_at
+            if expected_updated_at is not None and ticket.updated_at != expected_updated_at:
+                logger.warning(
+                    "Concurrent ticket modification detected during preview cleanup "
+                    "(ticket_id=%s): expected updated_at=%s, actual=%s. "
+                    "Skipping ticket restoration to avoid overwriting real changes.",
+                    ticket_id,
+                    expected_updated_at.isoformat(),
+                    ticket.updated_at.isoformat(),
+                )
+            else:
+                ticket.category = ticket_before["category"]
+                ticket.priority = ticket_before["priority"]
+                ticket.sentiment = ticket_before["sentiment"]
+                ticket.status = ticket_before["status"]
+                ticket.ai_summary = ticket_before["ai_summary"]
+                ticket.recommended_department = ticket_before["recommended_department"]
+                ticket.assigned_to = ticket_before["assigned_to"]
+                ticket.closed_at = ticket_before["closed_at"]
 
         self.db.commit()
 

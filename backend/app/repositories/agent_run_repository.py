@@ -78,6 +78,30 @@ class AgentRunRepository:
             statement = statement.offset(offset)
         return list(self.db.scalars(statement).all())
 
+    def get_latest_by_workflow_types(
+        self,
+        ticket_id: int,
+    ) -> dict[str, AgentRunLog | None]:
+        """Return the latest AgentRunLog (by created_at desc, id desc) for each workflow type.
+
+        Returns a dict with keys: single_agent_rag, single_agent_workflow, multi_agent.
+        A key's value is None when no run of that type exists for the given ticket.
+        """
+        workflow_types = ["single_agent_rag", "single_agent_workflow", "multi_agent"]
+        result: dict[str, AgentRunLog | None] = {}
+
+        for wf_type in workflow_types:
+            statement = (
+                select(AgentRunLog)
+                .where(AgentRunLog.ticket_id == ticket_id)
+                .where(AgentRunLog.run_type == wf_type)
+                .order_by(AgentRunLog.created_at.desc(), AgentRunLog.id.desc())
+                .limit(1)
+            )
+            result[wf_type] = self.db.scalar(statement)
+
+        return result
+
     def count_filtered(
         self,
         *,

@@ -2,10 +2,10 @@
 
 ## 1. 当前进度
 
-- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列、Conversation history 清理（AI Reply 不再自动追加为 ticket message）、时区显示修复（datetime 序列化含 UTC 时区 + 前端统一 formatDateTime）、source_workflow 规范化与三工作流独立展示修复、ai_suggestions.source_run_id 列缺失导致 500 错误修复
-- 当前日期：2026-07-07
+- 当前完成到：所有 37 Steps 已完成；近期增强：工单列表筛选后端化、工单消息录入、Audit Log 查询页面、Review API RBAC、待审核 Suggestion 队列、Conversation history 清理（AI Reply 不再自动追加为 ticket message）、时区显示修复（datetime 序列化含 UTC 时区 + 前端统一 formatDateTime）、source_workflow 规范化与三工作流独立展示修复、ai_suggestions.source_run_id 列缺失导致 500 错误修复、InMemorySaver checkpoint 丢失修复（数据库 fallback resume）
+- 当前日期：2026-07-08
 - 当前状态：可运行
-- 最近一次变更：**ai_suggestions.source_run_id 列缺失修复**：MySQL 表结构落后的 `source_run_id` 列导致 Dashboard 和 Pending Reviews 页面 500 错误。代码层面该字段已存在于 ORM 模型、Pydantic schema 和 RagService，但数据库表缺少该列且 `init_db()` 未在启动时自动执行。修复包括：增强 `sync_ai_suggestion_source_run_id()` 幂等函数（加列 + 创建索引）、在 `main.py` 添加 FastAPI `lifespan` 事件自动执行 `init_db()`、手动执行 `python -m app.db.init_db` 补齐线上数据库。
+- 最近一次变更：**InMemorySaver checkpoint 丢失修复**：Single-Agent 和 Multi-Agent workflow 在服务重启后，当 InMemorySaver 内存 checkpoint 丢失时，自动从 `agent_run_logs` 数据库记录中恢复待审核上下文。resume() 优先尝试正常 LangGraph checkpoint resume，失败时自动降级到 `_fallback_resume()`，查询持久化的 `output_json`，提取 `suggestion_id` 后复用 `ReviewService.apply_review_action()` 完成审核，并更新 AgentRunLog 为 completed。
 - 下一步应执行：PROJECT_IMPLEMENTATION_PLAN 已完成；建议补做 Docker 实机验收或扩展自动化测试
 
 ## 2. 已完成内容概述
@@ -26,6 +26,7 @@
 - 已完成 Step 37 交付材料：完整 README、架构文档、API 设计文档、演示脚本和简历包装文案
 - 已补充项目结构说明文档，覆盖项目目录、主要文件职责、技术栈和运行产物说明
 - 已补充 backend/app 函数级说明文档，并为核心后端文件增加中文阅读注释
+- 已修复 InMemorySaver checkpoint 丢失问题：Single-Agent 和 Multi-Agent workflow 在服务重启后，当 InMemorySaver checkpoint 丢失时，自动从 agent_run_logs 数据库记录中恢复待审核上下文，用户仍可正常完成 Approve / Edit / Reject 审核
 
 ## 3. 本次 Step 详细记录
 
@@ -1178,7 +1179,78 @@ sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1054, "Unknown 
 6. `curl POST /api/ai/tickets/1/process/start` — 200，返回 `status=pending_review`
 7. `python -m pytest -q` — 92 passed（全部后端测试通过）
 
-## 4. 验证记录
+---
+
+### InMemorySaver checkpoint 丢失修复：数据库 fallback resume (2026-07-08)
+
+#### 背景
+
+Single-Agent 和 Multi-Agent workflow 使用 LangGraph 的 InMemorySaver 存储中断 checkpoint。用户启动 Single-Agent 工作流或 Multi-Agent 分析后，workflow 停在 `human_review` 节点，checkpoint 写入 AgentRunLog（status=interrupted）。但 InMemorySaver 的 checkpoint 只存在于进程内存中。
+
+当后端服务重启后：
+- `interrupt_graph.get_state(config)` 返回空状态（`snapshot.next` 为空）
+- `resume()` 抛出 404：`"No interrupted workflow found for the provided thread_id/run_id."`
+- 前端仍能显示待审核画面（从 AgentRunLog 恢复），但 Approve / Edit / Reject 全部失败
+
+#### 修复方案
+
+采用"数据库 fallback resume"方案，不替换 InMemorySaver，只在 checkpoint 丢失时自动回退到持久化存储。
+
+#### 变更内容
+
+**`backend/app/services/agent_run_service.py`：**
+
+- 新增 `get_interrupted_run_for_resume()` 方法：
+  - 按 `run_id` 查询 AgentRunLog
+  - 校验 `ticket_id` 匹配、`status="interrupted"`、`run_type` 在 `allowed_workflows` 内
+  - 返回匹配的记录或 None
+
+**`backend/app/graphs/ticket_agent_graph.py`：**
+
+- 新增 `from datetime import UTC, datetime` 导入
+- 重构 `resume()` 方法：先尝试正常 LangGraph checkpoint resume（`snapshot.next` 非空时走原逻辑）；如果 checkpoint 丢失（`snapshot.next` 为空），自动进入 `_fallback_resume()`
+- 新增 `_fallback_resume()` 方法：
+  - 调用 `get_interrupted_run_for_resume()` 查询数据库（`allowed_workflows=["single_agent_rag", "single_agent_workflow"]`）
+  - 从 `output_json` 中提取 `suggestion_id`（兼容 5 种已知路径：`draft_reply.id`、`reply_suggestion.id`、`reviewed_suggestion.id`、`result.draft_reply.id`、`result.reply_suggestion.id`）
+  - 调用 `ReviewService.apply_review_action()` 执行审核（复用现有审核逻辑）
+  - 构造 `final_output` 匹配正常 LangGraph resume 的响应结构
+  - 更新 AgentRunLog 为 `status="completed"`，`output_json` 包含 `fallback_resumed: true`
+- 新增 `_extract_suggestion_id_from_output()` 静态方法
+
+**`backend/app/graphs/ticket_multi_agent_graph.py`：**
+
+- 同等重构：`resume()` → 正常路径 / `_fallback_resume()` 双分支
+- `_fallback_resume()`：`allowed_workflows=["multi_agent"]`，输出匹配 `AIMultiAgentProcessRead` 结构
+- `_extract_suggestion_id_from_output()` 兼容 multi-agent 数据路径（优先 `reply_result.reply_suggestion.id`）
+
+#### 设计要点
+
+1. **非侵入式**：InMemorySaver 未删除，正常重启前流程完全不变
+2. **自动降级**：checkpoint 存在时走原逻辑；丢失时静默 fallback
+3. **数据兼容**：审核动作复用 `ReviewService.apply_review_action()`，一行相同的审核逻辑
+4. **回复兼容**：`final_output` 字段与正常 LangGraph resume 一致，前端无需额外适配
+5. **幂等**：recall `upsert_run_log` 可安全将 interrupted → completed
+
+#### 修改文件
+
+- `backend/app/services/agent_run_service.py` — 新增 `get_interrupted_run_for_resume()`
+- `backend/app/graphs/ticket_agent_graph.py` — 新增 fallback resume + 提取 helper
+- `backend/app/graphs/ticket_multi_agent_graph.py` — 新增 fallback resume + 提取 helper
+- `docs/PROJECT_HANDOFF.md` — 记录本次变更、更新已知问题
+
+#### 数据库变化
+
+- 无（AgentRunLog 表不变，依赖于已有的 `run_id`/`ticket_id`/`status`/`output_json`/`run_type` 字段）
+
+#### API 变化
+
+- 无（请求/响应结构不变；`output_json` 在 fallback 时增加 `fallback_resumed: true` 标记）
+
+#### 验证记录
+
+- `python -m pytest -q`：92 passed（全部后端测试通过，未改动测试逻辑）
+- 语法验证：三个修改文件均通过 `ast.parse()` 检查
+- `_fallback_resume` 与正常 resume 返回一致的数据结构，前端无需修改
 
 ### 执行过的命令 (2026-07-06 source_workflow 规范化)
 
@@ -1316,7 +1388,7 @@ Get-Content -Path docs\BACKEND_APP_FUNCTION_GUIDE.md -Encoding utf8
 - 已覆盖的测试包括：health、login、工单 CRUD（含分页和筛选）、知识库上传搜索、AI mock 分类和 RAG 回复草稿链路、Review API RBAC、Pending Suggestions 队列查询、AgentRunLog 生命周期、时区一致性（92 个总测试）
 - 当前未加入前端 lint、组件测试或浏览器端 e2e 测试
 - 当前知识检索仍基于 fake embedding + 本地 JSON 向量索引，适合演示，但语义命中质量仍偏基础
-- 当前 Multi-Agent 使用 `InMemorySaver`，仅适合同一后端进程内演示；服务重启后暂停态不会保留
+- ~~当前 Multi-Agent 使用 `InMemorySaver`，仅适合同一后端进程内演示；服务重启后暂停态不会保留~~ 已修复：Single-Agent 和 Multi-Agent workflow 均已实现数据库 fallback resume，服务重启后用户仍可通过 AgentRunLog 中的持久化数据完成 Approve / Edit / Reject 审核操作
 
 ## 6. 下一步 Codex Prompt
 

@@ -7,6 +7,7 @@ import {
   approveSuggestion,
   classifyTicketAI,
   editSuggestion,
+  getLatestTicketAgentRunsByType,
   listReviewedSuggestions,
   listTicketAgentRuns,
   listTicketAgentRunsPage,
@@ -618,15 +619,28 @@ export default function TicketDetailPage() {
     setAgentRunsErrorMessage(null);
 
     try {
-      const runData = await listTicketAgentRuns(currentTicketId);
+      // Fetch full list for Agent Run History display AND latest-by-type for state recovery.
+      // The latest-by-type endpoint does not depend on limit/offset, so it reliably
+      // returns the newest run of each type even when the ticket has many runs.
+      const [runData, latestByType] = await Promise.all([
+        listTicketAgentRuns(currentTicketId),
+        getLatestTicketAgentRunsByType(currentTicketId).catch(() => null),
+      ]);
       if (!isMountedRef.current) {
         return;
       }
 
-      // Find the latest run of each type independently
-      const latestRag = runData.find((r) => normalizeRunType(r.run_type) === "single_agent_rag") ?? null;
-      const latestWorkflow = runData.find((r) => normalizeRunType(r.run_type) === "single_agent_workflow") ?? null;
-      const latestMulti = runData.find((r) => normalizeRunType(r.run_type) === "multi_agent") ?? null;
+      // Determine the latest run for each type — prefer latest-by-type, fallback to
+      // find-based logic when the dedicated endpoint is unavailable.
+      const latestRag = latestByType?.single_agent_rag
+        ?? runData.find((r) => normalizeRunType(r.run_type) === "single_agent_rag")
+        ?? null;
+      const latestWorkflow = latestByType?.single_agent_workflow
+        ?? runData.find((r) => normalizeRunType(r.run_type) === "single_agent_workflow")
+        ?? null;
+      const latestMulti = latestByType?.multi_agent
+        ?? runData.find((r) => normalizeRunType(r.run_type) === "multi_agent")
+        ?? null;
 
       setLatestSingleAgentRagRun(latestRag);
       setLatestSingleAgentWorkflowRun(latestWorkflow);
@@ -1521,7 +1535,7 @@ export default function TicketDetailPage() {
                     </div>
                   </article>
 
-                  <RagSourcesPanel sources={singleAgentResult.sources} />
+                  <RagSourcesPanel sources={singleAgentResult.sources ?? []} />
 
                   {/* Review form */}
                   <article className="panel panel--subtle">

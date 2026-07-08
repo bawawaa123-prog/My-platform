@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     secret_key: str = Field(default="replace-with-a-local-dev-secret", alias="SECRET_KEY")
     database_url: str = Field(
-        default="mysql+pymysql://root:password@127.0.0.1:3306/enterprise_support_agent?charset=utf8mb4",
+        default="sqlite:///./backend/app.db",
         alias="DATABASE_URL",
     )
     access_token_expire_minutes: int = Field(default=60 * 24, alias="ACCESS_TOKEN_EXPIRE_MINUTES")

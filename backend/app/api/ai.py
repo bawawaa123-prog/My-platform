@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.graphs.ticket_agent_graph import TicketAgentGraph
 from app.graphs.ticket_multi_agent_graph import TicketMultiAgentGraph
 from app.models.user import User
-from app.schemas.agent import AgentRunLogPage, AgentRunLogRead
+from app.schemas.agent import AgentRunLogPage, AgentRunLogRead, LatestAgentRunsByType
 from app.schemas.ai import (
     AIMultiAgentPendingReviewRead,
     AIMultiAgentProcessRead,
@@ -233,6 +233,30 @@ def list_ticket_agent_runs(
         status=status_filter
     )
     return [AgentRunLogRead.model_validate(run_log) for run_log in run_logs]
+
+
+@router.get(
+    "/tickets/{ticket_id}/agent-runs/latest-by-type",
+    response_model=LatestAgentRunsByType,
+)
+def list_latest_agent_runs_by_type(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LatestAgentRunsByType:
+    """Return the latest AgentRunLog for each workflow type under the given ticket.
+
+    Unlike the paginated list endpoint, this endpoint does not depend on
+    limit/offset, so it reliably returns the newest run of each type even when
+    the ticket has many runs.
+    """
+    TicketService(db).get_ticket(ticket_id)
+    runs = AgentRunService(db).get_latest_by_workflow_types(ticket_id)
+    return LatestAgentRunsByType(
+        single_agent_rag=AgentRunLogRead.model_validate(runs["single_agent_rag"]) if runs["single_agent_rag"] else None,
+        single_agent_workflow=AgentRunLogRead.model_validate(runs["single_agent_workflow"]) if runs["single_agent_workflow"] else None,
+        multi_agent=AgentRunLogRead.model_validate(runs["multi_agent"]) if runs["multi_agent"] else None,
+    )
 
 
 @router.get("/agent-runs/{run_id}", response_model=AgentRunLogRead)

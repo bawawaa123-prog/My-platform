@@ -18,6 +18,29 @@ class AgentRunService:
         self.db = db
         self.repository = AgentRunRepository(db)
 
+    def get_interrupted_run_for_resume(
+        self,
+        *,
+        ticket_id: int,
+        run_id: str,
+        allowed_workflows: list[str],
+    ) -> AgentRunLog | None:
+        """Find an interrupted AgentRunLog matching ticket_id, run_id, and allowed workflow types.
+
+        Used for database fallback resume when the InMemorySaver checkpoint is lost
+        after a server restart.
+        """
+        run_log = self.repository.get_by_run_id(run_id)
+        if run_log is None:
+            return None
+        if run_log.ticket_id != ticket_id:
+            return None
+        if run_log.status != "interrupted":
+            return None
+        if run_log.run_type not in allowed_workflows:
+            return None
+        return run_log
+
     def upsert_run_log(
         self,
         *,
@@ -56,6 +79,13 @@ class AgentRunService:
         if created_by is not None:
             existing.created_by = created_by
         return self.repository.save(existing)
+
+    def get_latest_by_workflow_types(
+        self,
+        ticket_id: int,
+    ) -> dict[str, AgentRunLog | None]:
+        """Return the latest AgentRunLog for each workflow type under the given ticket."""
+        return self.repository.get_latest_by_workflow_types(ticket_id)
 
     def list_by_ticket_id(
         self, 
